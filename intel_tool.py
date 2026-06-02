@@ -65,7 +65,7 @@ PP_DIR = os.path.join(
     "PP & Uo Note Dummy",
 )
 PP_TEMPLATE = os.path.join(PP_DIR, "PP Form details.docx")
-DEFAULT_SUMMARY_MODEL = "gemma2:9b"
+DEFAULT_SUMMARY_MODEL = "gpt-oss:120b-cloud"
 
 
 def _check_ollama() -> bool:
@@ -636,12 +636,13 @@ def _sync_profiles_from_texts(texts: list, report_date: str, use_ollama: bool):
         gnn.train(epochs=50)
 
     for idx, text in enumerate(texts):
-        # Extract candidate names
-        candidates = extract_candidate_names_from_text(text)
-        
-        # Classify candidates using Gemma2 NER
-        classifications = ner_eng.classify_candidates(text, candidates)
-        person_candidates = [cand for cand, cls in classifications.items() if cls == "PERSON"]
+        # Extract structured data for this paragraph if Ollama is enabled
+        structured_data = None
+        if use_ollama:
+            structured_data = ner_eng.extract_structured_profile_data(text)
+
+        # Extract person names using the NER engine (prioritizing pre-trained HF model)
+        person_candidates = ner_eng.extract_person_names(text)
 
         # Filter parentage and police ranks
         parent_names = re.findall(r"[SsDd]/o\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+){0,2})", text)
@@ -786,6 +787,7 @@ def _sync_profiles_from_texts(texts: list, report_date: str, use_ollama: bool):
                     activity_name=f"Mentioned in IS Report {report_date}",
                     activity_desc=text[:300],
                     activity_date=report_date,
+                    structured_data=structured_data,
                 )
                 updates_made += 1
 
@@ -830,6 +832,43 @@ def _sync_profiles_from_texts(texts: list, report_date: str, use_ollama: bool):
                 db.add_relation(ind_id, rec_id, "MENTIONED_IN")
                 # Add edge: Individual -> ASSOCIATED_WITH -> Crime
                 db.add_relation(ind_id, cri_id, "ASSOCIATED_WITH")
+                
+                # Add MEMBER_OF edge if organization involvement is present
+                if structured_data:
+                    org_info = structured_data.get("organization_involvement", {})
+                    if isinstance(org_info, list):
+                        org_info = org_info[0] if org_info else {}
+                    elif not isinstance(org_info, dict):
+                        org_info = {}
+                        
+                    org_name = org_info.get("org_name", "").strip()
+                    org_remarks = org_info.get("remarks", "").strip()
+                    if org_name:
+                        org_id = db.add_organization(org_name, org_remarks)
+                        if org_id:
+                            db.add_relation(ind_id, org_id, "MEMBER_OF")
+
+                # Add ACCUSED_IN edge if case details are present
+                if structured_data:
+                    case_info = structured_data.get("case_details", {})
+                    if isinstance(case_info, list):
+                        case_info = case_info[0] if case_info else {}
+                    elif not isinstance(case_info, dict):
+                        case_info = {}
+                        
+                    fir = case_info.get("fir_number", "").strip()
+                    sections = case_info.get("under_sections", "").strip()
+                    ps = case_info.get("police_station", "").strip()
+                    brief = case_info.get("case_brief", "").strip()
+                    
+                    case_id = fir if fir else (case_info.get("case_id") or "")
+                    if not case_id and (sections or brief):
+                        case_id = f"case_{cri_id}"
+                        
+                    if case_id:
+                        case_node_id = db.add_case(case_id, fir=fir, sections=sections, ps=ps, brief=brief)
+                        if case_node_id:
+                            db.add_relation(ind_id, case_node_id, "ACCUSED_IN")
 
         # Add co-occurrence edges between all individuals in the same event paragraph
         for i in range(len(ind_node_ids)):

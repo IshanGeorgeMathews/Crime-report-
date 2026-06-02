@@ -71,168 +71,24 @@ PLACE_NAMES = {
 
 # Expanded JUNK_WORDS including substances, organisations, administrative/report jargon
 JUNK_WORDS = {
-    # Administrative / ranks / titles
+    # Administrative & police ranks/titles
     "dysp", "adgp", "sp", "ci", "si", "asi", "police", "officer", "officers", "superintendent", 
     "deputy", "director", "general", "inspector", "magistrate", "minister", "president", 
-    "secretary", "leader", "leaders", "activist", "activists", "cadre", "cadres", "accused", 
-    "protester", "protesters", "representative", "representatives", "member", "members", "commissioner", "acp",
-    "magistrates",
-    # Report terminology
-    "report", "reports", "daily", "forecast", "alert", "alerts", "intrep", "subject", "sub", 
-    "date", "time", "hour", "hours", "hrs", "meeting", "meetings", "programme", "event", 
-    "events", "incident", "incidents", "activity", "activities", "protest", "protests", 
-    "strike", "strikes", "agitation", "agitations", "dharna", "dharnas", "march", "marches", 
-    "rally", "rallies", "campaign", "campaigns", "conference", "conferences", "seminar", 
-    "interrogation", "evidence", "custody", "remand", "arrest", "arrested", "seizure", 
-    "seizures", "case", "cases", "crime", "crimes", "ipc", "crpc", "uapa", "act", "acts", 
-    "section", "sections", "law", "order", "security", "intelligence", "excise", "forest", 
-    "watcher", "watchers", "patrol", "patrolling", "surveillance", "observation", "doing", 
-    "history", "details", "summary", "description", "gist", "remarks", "information", 
-    "input", "output", "status", "current", "message", "messages", "cob", "ref", "no", "number", 
-    "numbers", "dated", "dtd", "yours", "faithfully", "sincerely", "forwarded", "submitted", 
-    "received", "sender", "recipient", "topic", "alert", "detailed", "elaborated",
-    # Non-person entities
-    "station", "stations", "office", "offices", "headquarters", "hq", "branch", "division", 
-    "committee", "organisation", "organization", "panchayat", "panchayats", "panchayath", "panchayaths", "district", "village", "colony", "house", "city", "range", "ssb", "secret", "suggestion", "possibility", "sir", "rural", "maoist", "maoists", "reception", "further", "according", "shadow", "monitor", "observe", "evaluate", 
-    "building", "road", "street", "temple", "church", "mosque", "club", "press", "association", "blue", "star", 
-    "samithi", "samiti", "party", "front", "union", "forum", "board", "corporation", "municipality", 
-    "school", "college", "university", "court", "courts", "sessions", "junction", "bridge", 
-    "market", "shop", "hospital", "taluk", "block", "state", "country", "unveil", "statue",
-    # Acronyms & Organizations
-    "rpi", "rdpi", "rdtu", "rsu", "rpm", "rpcc", "kmp", "lwe", "ssr", "rjp", "rsis", "tim", "adms", "adbs", "prsu",
-    "collective", "watch", "co-operative", "infrastructure", "movement", "authority", "congress", "league",
-    "silverline", "realities", "delusions", "proposed", "malabar", "welfare", "project", "restoration",
-    "recruitment", "reservation", "appointments", "ponkala", "offering", "festival", "procession",
-    # Drug substances
-    "mdma", "ndps", "heroin", "ganja", "hash", "hashish", "cocaine", "marijuana", "opium", "amphetamine",
-    "methamphetamine", "lsd", "contraband", "substance", "substances", "drugs", "drug", "narcotic", "narcotics",
-    "gms", "gram", "grams",
-    # Numbers
-    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-    # Verbs / adjectives
-    "about", "above", "across", "after", "again", "against", "all", "almost", "along", 
-    "already", "also", "although", "always", "among", "another", "any", "anyone", 
-    "anything", "are", "around", "ask", "asked", "assessment", "at", 
-    "attend", "attended", "back", "be", "became", "because", "become", "becomes", 
-    "been", "before", "behind", "being", "below", "between", "both", "brief", "but", 
-    "by", "call", "called", "came", "can", "cannot", "certain", "change", 
-    "changed", "charge", "charged", "chief", "clear", "clearly", "close", "closed", 
-    "come", "comes", "commence", "commenced", "complete", "completed", "concern", 
-    "concerned", "concerning", "conclude", "concluded", "conduct", "conducted", 
-    "consequence", "consequently", "consider", "considered", "considering", "continue", 
-    "continued", "continuing", "could", "day", "days", "decision", 
-    "demand", "demanded", "depart", "department", "deployment", "design", "detail", 
-    "detailed", "detain", "detained", "develop", "developed", "development", "developments", 
-    "did", "direct", "directed", "direction", "discuss", "discussed", 
-    "discussion", "do", "does", "done", "down", "due", "during", 
-    "each", "early", "either", "encourage", "encouraged", "encroach", "encroached", 
-    "encroachment", "ensure", "ensured", "ensuring", "erect", "erected", "erecting", 
-    "even", "ever", "every", "everyone", "everything", "fact", "far", 
-    "few", "field", "file", "filed", "filing", "find", "first", "gave", "get", "gets", "give", "given", "gives", 
-    "go", "going", "gone", "got", "government", "govt", "great", "group", "groups", 
-    "had", "has", "have", "having", "he", "held", "help", "helped", "hence", "her", 
-    "here", "herself", "high", "him", "himself", "his", "how", "however", "if", 
-    "illegal", "in", "include", "included", "includes", "including", "increase", 
-    "increased", "increasing", "indeed", "indefinite", "inform", "inquiry", "inspect", "inspecting", "inspection", "instead", "instruct", 
-    "instructed", "instruction", "instructions", "interest", "internal", "into", 
-    "investigate", "investigated", "investigating", "involve", "involved", "involvement", "is", "issue", "issued", "issues", "it", "its", 
-    "itself", "join", "joined", "just", "keep", "kept", "knew", "know", "known", 
-    "knows", "large", "last", "late", "later", "latter", "least", "leave", 
-    "led", "less", "let", "like", "likely", "local", "locate", "located", "long", 
-    "look", "looked", "looking", "made", "main", "maintain", "maintained", "make", 
-    "makes", "making", "many", "may", "maybe", "me", "meanwhile", "meet", "might", "more", "moreover", "most", "mostly", "move", "moved", 
-    "movement", "movements", "much", "must", "my", "myself", "name", "named", 
-    "necessary", "need", "needed", "needs", "neither", "never", "nevertheless", 
-    "new", "next", "nobody", "none", "noone", "nor", "not", "note", "noted", 
-    "nothing", "now", "nowhere", "obtain", "obtained", "obtaining", "obvious", 
-    "obviously", "occasion", "occur", "occurred", "occurrence", "of", "off", 
-    "often", "old", "on", "once", "only", "onto", "open", "opened", 
-    "or", "organisational", "organizational", "other", "others", 
-    "otherwise", "our", "ours", "ourselves", "out", "over", "own", "part", 
-    "particular", "particularly", "people", "perform", "performed", 
-    "perhaps", "period", "person", "persons", "place", "places", "plan", "planned", 
-    "planning", "point", "pointed", "position", "possible", 
-    "post", "posted", "posting", "prepare", "prepared", "preparing", "present", 
-    "presented", "prevent", "prevented", "prevention", "previous", "previously", 
-    "prior", "private", "probable", "probably", "probing", "problem", 
-    "problems", "process", 
-    "produce", "produced", "progress", "proof", "proper", "properly", "proposal", "propose", "proposed", 
-    "protect", "protected", "protection", "provide", "provided", "public", 
-    "purpose", "put", "puts", "quite", "rather", "re", "reach", "reached", 
-    "read", "ready", "real", "really", "reason", "reasons", "receive", "received", 
-    "recent", "recently", "record", "recorded", "recording", "records", "reference", 
-    "references", "regarding", "region", "regional", "register", "registered", 
-    "relation", "relations", "release", "released", "relevant", "remain", 
-    "remained", "reporting", "request", "requested", 
-    "require", "required", "requirement", "requirements", "research", 
-    "respect", "response", "result", "results", "return", "returned", 
-    "review", "reviewed", "reviewing", "right", "role", "roles", 
-    "rough", "roughly", "round", "route", "routes", "rule", "rules", "run", 
-    "same", "saw", "say", "saying", "says", "second", "see", "seeing", "seem", "seemed", "seems", "seen", "select", "selected", 
-    "self", "send", "sending", "sent", "separate", "separated", "serious", "several", "shall", "she", "should", "show", "showed", "showing", 
-    "shows", "side", "sides", "since", "single", "site", "sites", "situation", 
-    "small", "so", "social", "society", "some", "someone", "something", 
-    "sometime", "somewhere", "soon", "special", "specific", "specifically", 
-    "start", "started", "starting", "starts", "stated", "statements", "states", "still", "stop", "stopped", "strengthen", "strengthened", 
-    "subjects", "subsequent", "subsequently", "substance", "substances", 
-    "such", "suggest", "suggested", "suggestions", "supported", "supporting", "sure", "system", "systems", "take", "taken", 
-    "takes", "taking", "team", "teams", "tell", "than", "thank", 
-    "thanks", "that", "the", "their", "theirs", "them", "themselves", "then", 
-    "there", "thereby", "therein", "thereof", "thereon", 
-    "thereto", "thereunder", "thereupon", "these", "they", "thing", "things", 
-    "think", "thinks", "third", "this", "those", "though", "three", "through", 
-    "throughout", "thru", "thus", "to", "together", "too", "took", 
-    "top", "toward", "towards", "town", "track", "tracking", "traffic", 
-    "trafficking", "transfer", "transferred", "transition", "travel", "traveled", 
-    "treatment", "trend", "trends", "trial", "trials", "tried", "tries", 
-    "trouble", "true", "trust", "try", "trying", "turn", "turned", "turning", 
-    "turns", "under", "understand", "understanding", "understood", 
-    "unless", "up", "upon", "us", "use", "used", "useful", 
-    "user", "uses", "using", "usual", "usually", "various", "very", "via", 
-    "view", "viewed", "views", "visit", "visited", "visiting", "visits", 
-    "was", "watch", "watched", "watching", "way", 
-    "ways", "we", "well", "went", "were", "what", "whatever", 
-    "when", "whence", "whenever", "where", "whereafter", "whereas", "whereby", 
-    "wherein", "whereupon", "wherever", "whether", "which", "while", "whither", 
-    "who", "whoever", "whole", "whom", "whose", "why", "will", "wish", 
-    "wished", "wishes", "wishing", "with", "within", "without", "wonder", 
-    "word", "words", "work", "worked", "would", "write", 
-    "writes", "writing", "written", "wrong", "wrote", "year", "years", 
-    "yet", "you", "your", "yours", "yourself", "yourselves",
-    # Additional words seen in reports that are NOT person names
-    "today", "silverline", "realities", "delusions", "indefinite", "commenced",
-    "continuing", "erecting", "huts", "encroaching", "distribute", "revenue",
-    "thinkalkkarikkam", "village", "landless", "settled", "forest", "coming",
-    "demanding", "propaganda", "kasargod", "welfare", "proposed", "malabar",
-    "project", "received", "reception", "places", "state", "wide", "women",
-    "prison", "application", "arms", "uniform", "trespassed", "houses",
-    "groceries", "vegetables", "threatening", "inmates", "left", "co-operative",
-    "unnatural", "death", "instigation", "wing", "support", "agitation",
-    "restoration", "SC/ST", "sc/st", "SCs", "STs", "special", "recruitment",
-    "reservation", "appointments", "ponkala", "offering", "procession",
-    "meetings", "reception", "activists", "defected", "financial", "unions",
-    "darshan", "festivities", "temples", "proposed", "slogan", "tomorrow",
-    "decided", "hunger", "strike", "quash", "charge", "sheet", "petition",
-    "kids", "appealing", "investigating", "records", "possession", "pattas",
-    "wing", "infrastructure", "post", "group", "supporting", "shops",
-    "video", "footage", "speech", "provocative", "viral", "banned", "entry",
-    "arabic", "outfits", "statement", "trauma", "rape", "advocates",
-    "hardships", "victims", "discussion", "cooperative", "gandhian", "human",
-    "rights", "collective", "gandhi", "square", "silverline", "vehicle",
-    "rally", "keralam", "venam", "venda", "hindurashtra", "hindu", "rashtra",
-    "rangaparivar", "sanghaparivar", "sanghaparivaris", "mart", "high",
-    "court", "junction", "hill", "palace", "town", "south", "brennen",
-    "secretariat", "adivasi", "adivasis", "dalit", "dalits", "tribal",
-    "tribals", "muslims", "hindus", "christians", "national", "nationals",
-    "junctions", "stations", "offices", "branches", "divisions", "committees",
-    "organisations", "organizations", "parties", "unions", "forums",
-    "associations", "clubs", "temples", "churches", "mosques", "colonies",
-    "villages", "districts", "states", "countries", "huts", "kids",
-    "encroachers", "activists", "leaders", "protesters", "receptions",
-    "propaganda", "meetings", "processions", "festivals", "offerings",
-    "festivities", "speeches", "outfits", "naadu", "implement", "acres", "acre",
-    "extension", "scheduled", "areas", "area", "bus", "stand", "east", "west",
-    "north", "rail", "k-rail", "krail"
+    "secretary", "commissioner", "acp", "constable", "clerk", "writer", "reader", "collector",
+    # Report boilerplate / terms
+    "signature", "sd", "copy", "report", "reports", "daily", "forecast", "alert", "alerts", 
+    "subject", "sub", "date", "time", "hour", "hours", "hrs", "meeting", "meetings", 
+    "programme", "event", "events", "incident", "incidents", "activity", "activities", 
+    "protest", "protests", "strike", "strikes", "agitation", "agitations", "dharna", 
+    "dharnas", "march", "marches", "rally", "rallies", "campaign", "campaigns", 
+    "conference", "conferences", "seminar", "case", "cases", "crime", "crimes", 
+    "ipc", "crpc", "uapa", "act", "acts", "section", "sections", "law", "order", 
+    "security", "intelligence", "station", "stations", "office", "offices", 
+    "headquarters", "hq", "branch", "division", "committee", "organisation", 
+    "organization", "panchayat", "panchayats", "district", "village", "house", 
+    "city", "range", "ssb", "yours", "faithfully", "sincerely", "forwarded", 
+    "submitted", "received", "sender", "recipient", "topic", "cadre", "cadres",
+    "accused", "protester", "protesters", "member", "members", "leader", "leaders"
 }
 
 # Alias for backward compatibility in extract_person_names
@@ -880,17 +736,165 @@ def create_new_profile(
     return output_path
 
 
+def _append_to_relations_table(table, rel_data: dict):
+    """Append a relative entry to Table 0 (Relations), filling empty rows first."""
+    name = rel_data.get("name", "").strip()
+    relation = rel_data.get("relation", "").strip()
+    address = rel_data.get("address", "").strip()
+    mobile = rel_data.get("mobile", "").strip()
+    if not name:
+        return
+
+    # Check if this relative is already in the table to avoid duplicates
+    existing_count = 0
+    first_empty_row = None
+    
+    # Iterate through rows starting from index 1 (skip header)
+    for row in table.rows[1:]:
+        row_cells = [c.text.strip() for c in row.cells]
+        # Check if the row is empty (ignore first cell which is SL No)
+        is_empty = all(c == "" for c in row_cells[1:])
+        if is_empty:
+            if first_empty_row is None:
+                first_empty_row = row
+        else:
+            existing_count += 1
+            # Check if this exact relative name already exists
+            if row_cells[1].lower() == name.lower():
+                return  # Duplicate, skip
+
+    # Select or create the row
+    if first_empty_row is not None:
+        target_row = first_empty_row
+    else:
+        target_row = table.add_row()
+
+    # Populate cells
+    sl_no = str(existing_count + 1)
+    target_row.cells[0].text = sl_no
+    target_row.cells[1].text = name
+    target_row.cells[2].text = relation
+    target_row.cells[3].text = address
+    target_row.cells[4].text = mobile
+
+
+def _append_to_case_table(table, case_data: dict):
+    """Append a case entry to Table 1 (Case Details), filling empty rows first."""
+    fir = case_data.get("fir_number", "").strip()
+    sections = case_data.get("under_sections", "").strip()
+    ps = case_data.get("police_station", "").strip()
+    brief = case_data.get("case_brief", "").strip()
+    status = case_data.get("case_status", "Under Investigation").strip()
+    co_accused = case_data.get("co_accused", "").strip()
+    
+    # We need at least one of these to consider it a valid case entry
+    if not (fir or sections or brief):
+        return
+
+    existing_count = 0
+    first_empty_row = None
+    
+    for row in table.rows[1:]:
+        row_cells = [c.text.strip() for c in row.cells]
+        is_empty = all(c == "" for c in row_cells[1:])
+        if is_empty:
+            if first_empty_row is None:
+                first_empty_row = row
+        else:
+            existing_count += 1
+            # Check if this exact case already exists
+            if fir and row_cells[1].lower() == fir.lower():
+                return  # Duplicate, skip
+
+    if first_empty_row is not None:
+        target_row = first_empty_row
+    else:
+        target_row = table.add_row()
+
+    sl_no = str(existing_count + 1)
+    target_row.cells[0].text = sl_no
+    target_row.cells[1].text = fir
+    target_row.cells[2].text = sections
+    target_row.cells[3].text = ps
+    target_row.cells[4].text = brief
+    target_row.cells[5].text = status
+    target_row.cells[6].text = co_accused
+
+
 def update_profile_activity(
     profile_path: str,
     activity_name: str = "",
     activity_desc: str = "",
     activity_date: str = "",
     persons_involved: str = "",
+    structured_data: dict = None,
 ):
-    """Update the Activities section in an existing PP profile .docx."""
+    """Update the Activities and other structured sections in an existing PP profile .docx."""
     doc = Document(profile_path)
 
-    for idx, para in enumerate(doc.paragraphs):
+    # 1. Update personal details and other text fields if structured_data is provided
+    if structured_data:
+        personal = structured_data.get("personal_details", {})
+        if isinstance(personal, list):
+            personal = personal[0] if personal else {}
+        elif not isinstance(personal, dict):
+            personal = {}
+
+        org = structured_data.get("organization_involvement", {})
+        if isinstance(org, list):
+            org = org[0] if org else {}
+        elif not isinstance(org, dict):
+            org = {}
+
+        brief_hist = structured_data.get("brief_history", "").strip()
+
+        # Map target fields in the profile paragraphs (safely preserve existing data)
+        for para in doc.paragraphs:
+            txt = para.text.strip()
+            
+            # Check for parentage
+            if txt.startswith("Parentage Name"):
+                existing = txt.split("-", 1)[-1].strip()
+                parent_val = personal.get("parentage", "").strip()
+                if (not existing or existing == "-" or existing == "") and parent_val:
+                    para.text = f"Parentage Name\t\t-\t{parent_val}"
+                    
+            # Check for address
+            elif txt.startswith("Address"):
+                existing = txt.split("-", 1)[-1].strip()
+                addr_val = personal.get("address", "").strip()
+                if (not existing or existing == "-" or existing == "") and addr_val:
+                    para.text = f"Address\t\t\t-\t{addr_val}"
+
+            # Check for police station
+            elif txt.startswith("Police Station"):
+                existing = txt.split("-", 1)[-1].strip()
+                ps_val = personal.get("police_station", "").strip()
+                if (not existing or existing == "-" or existing == "") and ps_val:
+                    para.text = f"Police Station\t\t-\t{ps_val}"
+
+            # Check for organization name
+            elif txt.startswith("Organization name"):
+                existing = txt.split("-", 1)[-1].strip()
+                org_val = org.get("org_name", "").strip()
+                if (not existing or existing == "-" or existing == "") and org_val:
+                    para.text = f"Organization name\t-\t{org_val}"
+
+            # Check for organization remarks
+            elif txt.startswith("Remarks") and para.text.startswith("Remarks"):
+                existing = txt.split("-", 1)[-1].strip()
+                rem_val = org.get("remarks", "").strip()
+                if (not existing or existing == "-" or existing == "") and rem_val:
+                    para.text = f"Remarks\t\t\t-\t{rem_val}"
+
+            # Check for brief history of person
+            elif txt.startswith("Brief History of Person"):
+                existing = txt.split("-", 1)[-1].strip()
+                if (not existing or existing == "-" or existing == "") and brief_hist:
+                    para.text = f"Brief History of Person \t-\t{brief_hist}"
+
+    # 2. Update Activities section paragraphs
+    for para in doc.paragraphs:
         txt = para.text.strip()
 
         if txt.startswith("Name of activity"):
@@ -920,6 +924,27 @@ def update_profile_activity(
                 para.text = f"Persons Involved Details\t-{existing}; {persons_involved}"
             elif persons_involved:
                 para.text = f"Persons Involved Details\t-{persons_involved}"
+
+    # 3. Update Table 0 (Relations) and Table 1 (Case Details)
+    if structured_data:
+        relations_list = structured_data.get("relations", [])
+        if not isinstance(relations_list, list):
+            relations_list = []
+            
+        case_data = structured_data.get("case_details", {})
+        if isinstance(case_data, list):
+            case_data = case_data[0] if case_data else {}
+        elif not isinstance(case_data, dict):
+            case_data = {}
+        
+        # Table 0 is Relations (usually the first table in doc.tables)
+        if len(doc.tables) > 0 and relations_list:
+            for rel in relations_list:
+                _append_to_relations_table(doc.tables[0], rel)
+                
+        # Table 1 is Case Details (usually the second table in doc.tables)
+        if len(doc.tables) > 1 and case_data:
+            _append_to_case_table(doc.tables[1], case_data)
 
     doc.save(profile_path)
 

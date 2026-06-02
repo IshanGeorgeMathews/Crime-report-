@@ -174,6 +174,42 @@ class GraphDatabase:
         self._log_audit("add_crime", {"node_id": node_id, "district": district, "date": date_str})
         return node_id
 
+    def add_organization(self, org_name: str, remarks: str = ""):
+        """Add or update an Organization node."""
+        if not org_name or len(org_name.strip()) < 2:
+            return None
+        node_id = f"org_{org_name.lower().replace(' ', '_').replace('/', '_')}"
+        existing_attrs = self.G.nodes[node_id] if self.G.has_node(node_id) else {}
+        
+        merged_attrs = {
+            "type": "organization",
+            "name": org_name,
+            "remarks": remarks or existing_attrs.get("remarks", ""),
+            "description": f"Organization: {org_name}. Remarks: {remarks or existing_attrs.get('remarks', 'None')}."
+        }
+        self.G.add_node(node_id, **merged_attrs)
+        self._log_audit("add_organization", {"node_id": node_id, "name": org_name})
+        return node_id
+
+    def add_case(self, case_id: str, fir: str = "", sections: str = "", ps: str = "", brief: str = ""):
+        """Add or update a Case node."""
+        if not case_id:
+            return None
+        node_id = f"case_{case_id.lower().replace(' ', '_').replace('/', '_')}"
+        existing_attrs = self.G.nodes[node_id] if self.G.has_node(node_id) else {}
+        
+        merged_attrs = {
+            "type": "case",
+            "fir_number": fir or existing_attrs.get("fir_number", ""),
+            "under_sections": sections or existing_attrs.get("under_sections", ""),
+            "police_station": ps or existing_attrs.get("police_station", ""),
+            "case_brief": brief or existing_attrs.get("case_brief", ""),
+            "description": f"Case FIR: {fir or existing_attrs.get('fir_number', 'None')}. Sections: {sections or existing_attrs.get('under_sections', 'None')}. Police Station: {ps or existing_attrs.get('police_station', 'None')}. Brief: {brief or existing_attrs.get('case_brief', 'None')}."
+        }
+        self.G.add_node(node_id, **merged_attrs)
+        self._log_audit("add_case", {"node_id": node_id, "fir_number": fir})
+        return node_id
+
     def add_relation(self, u_id: str, v_id: str, rel_type: str, weight: float = 1.0):
         """Add or update an edge between u_id and v_id with structural type constraints."""
         if not self.G.has_node(u_id) or not self.G.has_node(v_id):
@@ -194,6 +230,12 @@ class GraphDatabase:
             
             ("crime", "record"): {"REPORTED_IN"},
             ("record", "crime"): {"REPORTED_IN"},
+
+            ("individual", "organization"): {"MEMBER_OF"},
+            ("organization", "individual"): {"MEMBER_OF"},
+
+            ("individual", "case"): {"ACCUSED_IN"},
+            ("case", "individual"): {"ACCUSED_IN"},
         }
         
         pair = (type_u, type_v)
@@ -218,6 +260,8 @@ class GraphDatabase:
             "individual_nodes": 0,
             "crime_nodes": 0,
             "record_nodes": 0,
+            "organization_nodes": 0,
+            "case_nodes": 0,
             "edge_types": {}
         }
         for _, ndata in self.G.nodes(data=True):
@@ -228,6 +272,10 @@ class GraphDatabase:
                 stats["crime_nodes"] += 1
             elif ntype == "record":
                 stats["record_nodes"] += 1
+            elif ntype == "organization":
+                stats["organization_nodes"] += 1
+            elif ntype == "case":
+                stats["case_nodes"] += 1
                 
         for _, _, edata in self.G.edges(data=True):
             etype = edata.get("type", "unknown")

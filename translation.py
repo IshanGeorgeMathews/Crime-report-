@@ -152,6 +152,8 @@ class TranslationEngine:
 
     def initialize_indictrans(self):
         """Lazy load IndicTrans2 model if possible."""
+        if os.environ.get("DISABLE_INDIC_TRANS") == "1":
+            return False
         if self.initialized:
             return True
         if self.indic_attempted:
