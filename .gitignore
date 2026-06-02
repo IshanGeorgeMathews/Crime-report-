@@ -18,6 +18,7 @@ review_registry.json
 test_*.py
 *_test.py
 .pytest_cache/
+test*.py
 
 # Python/runtime noise
 __pycache__/
