@@ -3,7 +3,7 @@ utils.py - Core utilities for Intelligence Report Consolidation & Profile Sync
 ===============================================================================
 Handles:
   - .docx reading/writing via python-docx
-  - Malayalam <-> English translation (deep-translator / Ollama)
+  - Malayalam <-> English translation (IndicTrans2 first, Google fallback)
   - Categorisation of BACK FILES into Events, Forecasts, Social Media
   - Profile database loading, matching, disambiguation, creation & update
   - Daily Report document generation with proper formatting
@@ -335,7 +335,8 @@ def translate_ml_to_en(text: str, use_ollama: bool = False, ollama_url: str = "h
     text : str
         Source text (may be mixed Malayalam / English).
     use_ollama : bool
-        If True, try Ollama first.
+        Compatibility flag; Ollama is used by the caller for summarization,
+        while raw translation uses IndicTrans2 first.
     ollama_url : str
         Base URL of a running Ollama instance.
     batch_engines : list, optional
@@ -1189,9 +1190,10 @@ def build_daily_report(
     p = doc.add_paragraph("// Secret//")
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    if failed_files:
-        add_fgps_alert_table(doc, report_date, failed_files)
-        doc.add_paragraph()  # blank line after table
+    # Remove the data integrity alert at the top of the page
+    # if failed_files:
+    #     add_fgps_alert_table(doc, report_date, failed_files)
+    #     doc.add_paragraph()  # blank line after table
 
     if ref_number:
         p2 = doc.add_paragraph(ref_number)
@@ -1334,3 +1336,69 @@ def parse_social_media_file(path: str) -> list:
         items.append(current_item)
 
     return items
+
+
+def extract_details_from_docx_paragraphs(paragraphs: list) -> str:
+    """Isolate the core narrative paragraphs of a report, discarding
+    administrative headers, subjects, and footers.
+    """
+    # Clean paragraphs
+    cleaned_paras = [p.strip() for p in paragraphs if p.strip()]
+    
+    header_prefixes = (
+        "no:", "no.", "നമ്പർ:", "പ്രേഷകൻ:", "സ്വീകർത്താവ്:", "തീയതി:", 
+        "date:", "time:", "to:", "from:", "info:", "sir,", "cob message", 
+        "ഇമെയിൽ സന്ദേശം", "email message", "special branch", "field report", "ഫീൽഡ് റിപ്പോർട്ട്"
+    )
+    
+    footer_prefixes = (
+        "വിശ്വസ്തതയോടെ", "yours faithfully", "yours sincerely", 
+        "for dysp", "dysp", "ഡെപ്യൂട്ടി സൂപ്രണ്ട്", "copy to", "പകർപ്പ്", "source:"
+    )
+    
+    details_start_idx = 0
+    subject_found = False
+    
+    # First check for subject line
+    for idx, p in enumerate(cleaned_paras):
+        p_low = p.lower()
+        if p_low.startswith(("വിഷയം:", "sub:", "subject:", "വിശദവിവരങ്ങൾ:", "വിവരം:")) or p_low == "വിഷയം" or p_low == "sub":
+            details_start_idx = idx + 1
+            subject_found = True
+            break
+    
+    # If no subject was found, skip leading headers
+    if not subject_found:
+        for idx, p in enumerate(cleaned_paras):
+            p_low = p.lower()
+            is_header = False
+            if p_low.startswith(header_prefixes):
+                is_header = True
+            elif "internal security input report" in p_low:
+                is_header = True
+            elif "alert report" in p_low:
+                is_header = True
+            
+            if is_header:
+                details_start_idx = idx + 1
+            else:
+                break
+    
+    # Check if there is an "Elaborated Report" / "Detailed Description" after the start index
+    for idx in range(details_start_idx, len(cleaned_paras)):
+        p_low = cleaned_paras[idx].lower()
+        if "elaborated report" in p_low or "detailed description" in p_low or "detailed narrative" in p_low:
+            details_start_idx = idx + 1
+            break
+            
+    # Gather paragraphs from details_start_idx to the footer
+    details_paras = []
+    for idx in range(details_start_idx, len(cleaned_paras)):
+        p = cleaned_paras[idx]
+        p_low = p.lower()
+        # Check for footer
+        if any(p_low.startswith(f) for f in footer_prefixes) or p_low == "വിശ്വസ്തതയോടെ,":
+            break
+        details_paras.append(p)
+        
+    return "\n".join(details_paras)

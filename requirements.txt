@@ -3,6 +3,12 @@ python-docx>=0.8.11
 
 # Translation
 deep-translator>=1.11.4
+transformers>=4.40.0
+sentencepiece>=0.2.0
+accelerate>=0.30.0
+sacremoses>=0.1.1
+indic-nlp-library>=0.92
+protobuf>=4.25.0
 
 # HTTP (Ollama integration)
 requests>=2.31.0

@@ -147,12 +147,16 @@ class TranslationEngine:
             cls._instance.tokenizer = None
             cls._instance.device = None
             cls._instance.initialized = False
+            cls._instance.indic_attempted = False
         return cls._instance
 
     def initialize_indictrans(self):
         """Lazy load IndicTrans2 model if possible."""
         if self.initialized:
             return True
+        if self.indic_attempted:
+            return False
+        self.indic_attempted = True
             
         try:
             import torch
@@ -223,7 +227,13 @@ class TranslationEngine:
             print(f"  [Error] Fallback Google Translate failed: {e}")
             return text, "failed"
 
-    def translate_document(self, text: str, batch_engines: list = None) -> str:
+    def translate_document(
+        self,
+        text: str,
+        use_ollama: bool = False,
+        ollama_url: str = "http://localhost:11434",
+        batch_engines: list = None,
+    ) -> str:
         """Translates mixed-script raw text.
         
         1. Segment text by script (protect English runs).
@@ -231,6 +241,10 @@ class TranslationEngine:
         3. Translates Malayalam runs chunk by chunk using translate_segment.
         4. Reassembles runs in original order.
         5. Logs engine consistency tracking.
+
+        IndicTrans2 is always the primary translator. ``use_ollama`` and
+        ``ollama_url`` are accepted for compatibility with the older wrapper;
+        Ollama is used later for summarization, not raw translation.
         """
         if not text or not text.strip():
             return text

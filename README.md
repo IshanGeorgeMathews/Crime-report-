@@ -60,21 +60,22 @@ This installs:
 | Package | Purpose |
 |---|---|
 | `python-docx` | Read and write .docx files |
-| `deep-translator` | Malayalam → English translation (Google free) |
-| `requests` | Ollama integration (optional, better translation) |
+| `transformers` / `sentencepiece` | IndicTrans2 Malayalam to English translation |
+| `deep-translator` | Google fallback translation |
+| `requests` | Ollama integration for Gemma summarization |
 | `networkx` | Graph database |
 | `numpy` | Numerical operations |
 | `scikit-learn` | TF-IDF feature extraction |
 | `torch` | PyTorch GCN (Graph Neural Network) |
 | `pytest` | Running unit tests |
 
-### Optional: Ollama (Better Translation)
-Install [Ollama](https://ollama.com) and pull the `llama3` model for higher-quality Malayalam translation:
+### Optional: Ollama (Gemma Summarization)
+Install [Ollama](https://ollama.com) and pull Gemma2 9B for post-translation summarization:
 ```bash
-ollama pull llama3
+ollama pull gemma2:9b
 ollama serve
 ```
-The tool automatically detects and uses Ollama if running. Falls back to Google Translate (via `deep-translator`) otherwise.
+The tool uses IndicTrans2 as the primary translator. Google Translate is only a fallback. If Ollama and Gemma2 are available, each translated item is summarized before it is written to the Daily IS Report.
 
 ---
 
@@ -95,6 +96,12 @@ python intel_tool.py consolidate 10.03.2022 --force
 
 # Disable Ollama even if running
 python intel_tool.py consolidate 10.03.2022 --no-ollama
+
+# Translate without Gemma summarization
+python intel_tool.py consolidate 10.03.2022 --no-summary
+
+# Use another installed Ollama model for summarization
+python intel_tool.py consolidate 10.03.2022 --summary-model gemma2
 ```
 
 ### 2. Sync Profiles from an Existing Report
