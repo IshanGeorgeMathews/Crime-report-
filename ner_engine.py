@@ -5,8 +5,8 @@ import requests
 import unicodedata
 from datetime import datetime
 
-# Import place names, junk words, etc. from utils
-from utils import PLACE_NAMES, JUNK_WORDS, create_new_profile
+# Import profile creation helper from utils
+from utils import create_new_profile
 
 REGISTRY_NAME = "review_registry.json"
 
@@ -167,94 +167,75 @@ class NEREngine:
         return ""
 
     def classify_candidates(self, text: str, candidates: list) -> dict:
-        """Classify candidate names using pretrained HF model, Ollama model, or heuristics fallback."""
+        """Classify candidate names using the Ollama LLM as the sole authority.
+
+        The LLM decides whether each candidate is a real human person name,
+        a location, an organization, or junk/noise.  There is NO hardcoded
+        word-list fallback — if the LLM is unavailable the safe default is
+        JUNK (i.e. we never create a profile for something we can't verify).
+        """
         classifications = {}
         if not candidates:
             return classifications
 
-        # Method 1: Try pretrained HF model
-        if self.initialize_ner_pipeline():
+        model_to_use = self._resolve_model()
+
+        if model_to_use:
+            prompt = (
+                "You are an expert intelligence analyst for the Kerala Police.\n"
+                "Your task is to classify each candidate word/phrase below into EXACTLY one category.\n\n"
+                "Categories:\n"
+                "- 'PERSON': A real human being's personal name. "
+                "  Typical Indian/Kerala names such as 'Sachin', 'Beena', 'Chittoor Kutty', 'Mohammed Shareef'.\n"
+                "  IMPORTANT: Only classify as PERSON if it is genuinely a human's given name or full name.\n"
+                "- 'LOCATION': A geographic place — town, village, district, state, country "
+                "  (e.g. 'Meppadi', 'Arippa', 'Kollam', 'Kozhikode', 'Kerala').\n"
+                "- 'ORGANIZATION': Political parties, unions, front groups, committees, government bodies "
+                "  (e.g. 'RSU', 'KMP', 'Congress', 'Revenue Department', 'CPI').\n"
+                "- 'JUNK': Everything else — administrative words, report boilerplate, ranks, titles, "
+                "  dates, page numbers, legal terms, common English nouns, verbs, or adjectives "
+                "  that are NOT a person's name "
+                "  (e.g. 'Revenue', 'Signature', 'Inspector', 'Police', 'Copy', 'Forecast', "
+                "  'District', 'Intelligence', 'Station', 'Security', 'Order', 'Report').\n\n"
+                "CRITICAL RULES:\n"
+                "1. Common English dictionary words (Revenue, District, Intelligence, Security, "
+                "   General, Division, etc.) are NEVER person names — classify them as JUNK or ORGANIZATION.\n"
+                "2. Police/military ranks and titles (Inspector, Superintendent, Commissioner, "
+                "   Constable, Officer) are JUNK, not PERSON.\n"
+                "3. When in doubt, classify as JUNK. We only want real human names as PERSON.\n"
+                "4. A single common English word is almost certainly NOT a person name.\n\n"
+                f"Context text for reference:\n\"\"\"{text[:1500]}\"\"\"\n\n"
+                f"Candidates to classify:\n{json.dumps(candidates)}\n\n"
+                "Return ONLY a valid JSON object where each candidate is a key and its "
+                "classification (PERSON / LOCATION / ORGANIZATION / JUNK) is the value.\n"
+                "No markdown, no explanation, no code blocks — just the JSON object."
+            )
             try:
-                results = self.ner_pipeline(text)
-                extracted_entities = {}
-                for ent in results:
-                    word = ent.get("word", "").strip()
-                    entity_type = ent.get("entity_group", "")
-                    if word and entity_type:
-                        norm_type = {
-                            "PER": "PERSON",
-                            "LOC": "LOCATION",
-                            "ORG": "ORGANIZATION"
-                        }.get(entity_type, "")
-                        if norm_type:
-                            extracted_entities[word.lower()] = norm_type
-                
-                # Match candidates to the extracted entities
-                from utils import is_fuzzy_match
-                for cand in candidates:
-                    cand_low = cand.lower()
-                    matched_type = None
-                    for ent_word, ent_type in extracted_entities.items():
-                        if cand_low == ent_word or is_fuzzy_match(cand_low, ent_word):
-                            matched_type = ent_type
-                            break
-                    if matched_type:
-                        classifications[cand] = matched_type
-            except Exception as e:
-                print(f"  [Warning] Pretrained HF NER prediction failed: {e}. Falling back.")
-
-        # Method 2: Try Ollama model if any candidates remain unclassified
-        unclassified = [c for c in candidates if c not in classifications]
-        if unclassified:
-            model_to_use = self._resolve_model()
-            use_ollama = bool(model_to_use)
-
-            if use_ollama:
-                prompt = (
-                    "You are an expert intelligence analyst for the Kerala Police.\n"
-                    "Analyze the following text and classify each of the candidate names listed below "
-                    "strictly as one of these categories:\n"
-                    "- 'PERSON': actual human names, typically Kerala or Indian names (e.g., 'Sachin', 'Beena', 'Chittoor Kutty').\n"
-                    "- 'LOCATION': places, districts, towns, or villages (e.g., 'Meppadi', 'Arippa').\n"
-                    "- 'ORGANIZATION': political parties, front groups, unions, or committees (e.g., 'RSU', 'KMP').\n"
-                    "- 'JUNK': administrative words, boilerplate, titles, police ranks, dates, page numbers, or noise (e.g., 'Signature', 'Sd', 'Copy', 'Inspector', 'Police').\n\n"
-                    f"Text:\n\"\"\"{text}\"\"\"\n\n"
-                    f"Candidates:\n{', '.join(unclassified)}\n\n"
-                    "Return the classification as a JSON object where each candidate name is a key, "
-                    "and the value is its classification (strictly one of 'PERSON', 'LOCATION', 'ORGANIZATION', or 'JUNK').\n"
-                    "Do not include any other text, markdown formatting, or explanations in the response. "
-                    "Output ONLY valid JSON."
+                resp = requests.post(
+                    f"{self.ollama_url}/api/generate",
+                    json={"model": model_to_use, "prompt": prompt, "stream": False, "format": "json"},
+                    timeout=45
                 )
-                try:
-                    resp = requests.post(
-                        f"{self.ollama_url}/api/generate",
-                        json={"model": model_to_use, "prompt": prompt, "stream": False, "format": "json"},
-                        timeout=30
-                    )
-                    if resp.status_code == 200:
-                        response_text = resp.json().get("response", "").strip()
-                        parsed = json.loads(response_text)
-                        for cand in unclassified:
-                            val = parsed.get(cand)
-                            if val in {"PERSON", "LOCATION", "ORGANIZATION", "JUNK"}:
-                                classifications[cand] = val
-                except Exception as e:
-                    print(f"[Warning] NER model classification failed: {e}. Falling back to heuristics.")
+                if resp.status_code == 200:
+                    response_text = resp.json().get("response", "").strip()
+                    # Handle JSON wrapped in a list
+                    parsed = json.loads(response_text)
+                    if isinstance(parsed, list):
+                        parsed = parsed[0] if parsed else {}
+                    for cand in candidates:
+                        val = parsed.get(cand)
+                        if val in {"PERSON", "LOCATION", "ORGANIZATION", "JUNK"}:
+                            classifications[cand] = val
+            except Exception as e:
+                print(f"[Warning] LLM classification failed: {e}. Defaulting unclassified to JUNK.")
 
-        # Method 3: Final fallback to heuristics
+        # Safe default: anything NOT classified by the LLM is JUNK.
+        # We NEVER default to PERSON — a false negative (missing a real name)
+        # is far less harmful than a false positive (creating a profile for 'Revenue').
         for cand in candidates:
-            if cand not in classifications or classifications[cand] == "JUNK":
-                cand_low = cand.lower()
-                if cand_low in PLACE_NAMES:
-                    classifications[cand] = "LOCATION"
-                elif cand_low in JUNK_WORDS:
-                    classifications[cand] = "ORGANIZATION"
-                else:
-                    # Double guard: if any token is a junk word, classify as ORGANIZATION
-                    if any(tok.strip(".,()[]{}'\"-:") in JUNK_WORDS for tok in cand_low.split()):
-                        classifications[cand] = "ORGANIZATION"
-                    else:
-                        classifications[cand] = "PERSON"
+            if cand not in classifications:
+                classifications[cand] = "JUNK"
+                print(f"  [Safe Default] '{cand}' -> JUNK (LLM did not classify)")
 
         return classifications
 
@@ -317,6 +298,10 @@ class NEREngine:
                 if start_idx != -1 and end_idx != -1:
                     json_str = response_text[start_idx:end_idx+1]
                     data = json.loads(json_str)
+                    if isinstance(data, list):
+                        data = data[0] if data else {}
+                    if not isinstance(data, dict):
+                        data = {}
                     
                     # Merge with default_data to ensure keys are present
                     result = {}
@@ -335,79 +320,44 @@ class NEREngine:
         return default_data
 
     def extract_person_names(self, text: str) -> list:
-        """Extract person names directly from text using pretrained HF model.
+        """Extract person names from text, using HF model to find candidates and Ollama to classify them."""
+        candidates = []
         
-        Falls back to rule-based candidate classification if pretrained model fails or is unavailable.
-        """
-        # Try Method 1: Pretrained HF model (no candidate lists or junk words)
+        # 1. Use HF model to find initial person candidates
         if self.initialize_ner_pipeline():
             try:
                 results = self.ner_pipeline(text)
-                person_names = []
                 for ent in results:
                     if ent.get("entity_group") == "PER":
                         name = ent.get("word", "").strip()
-                        # Clean subwords or BPE formatting if any
                         name = name.replace(" ##", "").replace("##", "")
-                        # Filter out very short noise
                         if name and len(name) >= 3:
-                            person_names.append(name)
-                if person_names:
-                    return list(set(person_names))
+                            candidates.append(name)
             except Exception as e:
-                print(f"  [Warning] HF NER extraction failed: {e}. Falling back to candidate classification.")
-
-        # Fallback: Extract candidates and classify them (uses Ollama/heuristics and JUNK_WORDS)
-        from utils import extract_candidate_names_from_text
-        candidates = extract_candidate_names_from_text(text)
+                print(f"  [Warning] HF NER candidate extraction failed: {e}.")
+                
+        # 2. If HF didn't find anything or failed, use candidate heuristics to get potential names
+        if not candidates:
+            from utils import extract_candidate_names_from_text
+            candidates = extract_candidate_names_from_text(text)
+            
+        candidates = list(set(candidates))
+        if not candidates:
+            return []
+            
+        # 3. Classify candidates using Ollama (using the cloud-backed model)
         classifications = self.classify_candidates(text, candidates)
+        
+        # 4. Filter only those verified as PERSON by the model
         return [cand for cand, cls in classifications.items() if cls == "PERSON"]
 
     def process_candidate(self, name: str, text: str, template_path: str, report_date: str) -> str:
-        """Verified Entity Gate (VEG) State-Machine.
-        
-        Checks if the candidate PERSON name matches PLACE_NAMES or JUNK_WORDS.
-        If yes, applies the state-machine rules:
-        - If rejected: returns "ignored".
-        - If pending: updates last_seen, returns "pending_already_exists".
-        - If approved: returns "approved".
-        - If new: creates Name_review.docx, sets pending in registry, returns "pending_new".
-        
-        If it does not match PLACE_NAMES/JUNK_WORDS, it bypasses the review queue and returns "approved".
+        """Process a candidate that has ALREADY been classified as PERSON by
+        classify_candidates().  Simply returns 'approved' so the caller
+        can create / update the profile.
+
+        The old Verified Entity Gate (VEG) with PLACE_NAMES / JUNK_WORDS
+        lists has been removed — all semantic filtering now happens inside
+        classify_candidates() via the LLM.
         """
-        name_lower = name.strip().lower()
-        
-        if name_lower in PLACE_NAMES or name_lower in JUNK_WORDS:
-            status = self.get_status(name)
-            
-            if status == "rejected":
-                return "ignored"
-                
-            elif status == "pending":
-                self.registry[name_lower]["last_seen"] = datetime.utcnow().isoformat() + "Z"
-                self.save_registry()
-                return "pending_already_exists"
-                
-            elif status == "approved":
-                return "approved"
-                
-            else:
-                self.registry[name_lower] = {
-                    "status": "pending",
-                    "last_seen": datetime.utcnow().isoformat() + "Z"
-                }
-                self.save_registry()
-                
-                safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
-                review_path = os.path.join(self.pp_dir, f"{safe_name}_review.docx")
-                if not os.path.exists(review_path):
-                    create_new_profile(
-                        name=name,
-                        activity_desc=text[:300],
-                        activity_date=report_date,
-                        template_path=template_path,
-                        output_path=review_path
-                    )
-                return "pending_new"
-        else:
-            return "approved"
+        return "approved"

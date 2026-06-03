@@ -43,7 +43,6 @@ from utils import (
     validate_report_structure,
     extract_candidate_names_from_text,
     HONORIFICS,
-    STOP_WORDS,
     is_fuzzy_match,
     DISTRICT_CODES,
     SOCIAL_MEDIA_KEYWORDS,
@@ -648,7 +647,7 @@ def _sync_profiles_from_texts(texts: list, report_date: str, use_ollama: bool):
         parent_names = re.findall(r"[SsDd]/o\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+){0,2})", text)
         parent_names_clean = []
         for pn in parent_names:
-            words = [w for w in pn.split() if w.lower() not in HONORIFICS and w.lower() not in STOP_WORDS]
+            words = [w for w in pn.split() if w.lower() not in HONORIFICS]
             if words:
                 parent_names_clean.append(" ".join(words))
 

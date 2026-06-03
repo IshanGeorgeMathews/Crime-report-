@@ -37,92 +37,47 @@ _ML_RE = re.compile(r"[\u0D00-\u0D7F]")
 
 HONORIFICS = {"sri", "sri.", "shri", "shri.", "smt", "smt.", "mr", "mr.", "mrs", "mrs.", "ms", "ms.", "dr", "dr."}
 
-# Comprehensive PLACE_NAMES for Kerala/reports
-PLACE_NAMES = {
-    "thiruvananthapuram", "tvm", "kollam", "klm", "pathanamthitta", "pta", "alappuzha", 
-    "alp", "kottayam", "ktm", "idukki", "idk", "ernakulam", "ekm", "thrissur", "tsr", 
-    "palakkad", "pkd", "malappuram", "mpm", "kozhikode", "kkd", "wayanad", "wyd", 
-    "kannur", "knr", "kasaragod", "ksd", "meppadi", "arippa", "kocharippa", "vithukad", 
-    "muthukad", "kodencheri", "palli", "annamanada", "sultanbatheri", "mananthavadi", 
-    "peruvannamuzhi", "seethappara", "punnassery", "walayar", "tavinjal", "talappuzha", 
-    "kombidi", "cherp", "palakkal", "kochi", "cochin", "calicut", "trivandrum", 
-    "nedumangad", "kilikollur", "killikollur", "kulathupuzha", "chalakudy", 
-    "kalpatta", "kalpetta", "panampilly", "nagar", "sree", "devi", "bhadrakali", "parassala", 
-    "vellayambalam", "anandavalliswaram", "thingkalkarikam", "aripa", "valancherry", 
-    "kodumudi", "tiruvegapuram", "vidyamaangalam", "kilimanoor", "kakkanad", 
-    "thiruvankulam", "kelakam", "palliyara", "piravam", "chalakudi", "ranni", "adoor", "konni",
-    "mysore", "koodathayi", "maikkavu", "kattipara", "thamarassery", "chembrakkunda", 
-    "dharmadam", "pinarayi", "kathiroor", "koothuparamba", "kottarakkara", "punalur", 
-    "anchalummoodu", "kunnikkode", "thalappuzha", "mananthavady", "varghees", "thavinjhal",
-    "thinkalkarikkam", "seethappara", "peruvannamuzhy", "kakkanad", "thiruvankulam", "varghese",
-    "edakkara", "kocharipa", "thinkalkarikkam", "pushpagiri", "kacheripadi", "viyyur", "ayanur",
-    "kunnamkulam", "varadiyam", "kottekkad", "pulamanthole", "vembayam", "kanyakulangara",
-    "irumpanangadu", "chittakkode", "ezhukone", "ettumanoor", "manimala", "cheruvalli",
-    "santhanpara", "kalippara", "koothattukulam", "mulamthuruthy", "ollur", "vatanapally",
-    "varantharappilli", "valapattanam", "azhikode", "mattannur", "kannavam", "kottiyoor",
-    "thalassery", "kolavalloor", "mala", "annamanada", "kunjimangalam", "kandmkulangara",
-    "areakkode", "koorachundu", "kasaba", "puthoor", "puthusseri", "puthoorpadam", "therottam",
-    "pettah", "venpalavattom", "anayara", "udayadichapuram", "noonjinkkara", "manantheri",
-    "palayottumchal", "kallerikkara", "poozhathippadi", "chirakkara", "kuzhippangad",
-    "kannancode", "padikkunnu", "high", "court", "junction", "hill", "palace", "town", "south",
-    "brennen", "kerala", "india", "gandhi", "square", "piravom", "cherpu", "appadu", "meenangadi",
-    "valayar", "appadu", "areakkode", "kozhikkode", "perambra", "viyyur"
-}
+# ---------------------------------------------------------------------------
+# Legacy stubs – kept empty so downstream imports (graph_db, cleanup) don't
+# break.  Classification is now 100% model-driven via NEREngine.
+# ---------------------------------------------------------------------------
+PLACE_NAMES: set = set()   # DEPRECATED – do not add entries
+JUNK_WORDS:  set = set()   # DEPRECATED – do not add entries
+STOP_WORDS:  set = set()   # DEPRECATED – alias
 
-# Expanded JUNK_WORDS including substances, organisations, administrative/report jargon
-JUNK_WORDS = {
-    # Administrative & police ranks/titles
-    "dysp", "adgp", "sp", "ci", "si", "asi", "police", "officer", "officers", "superintendent", 
-    "deputy", "director", "general", "inspector", "magistrate", "minister", "president", 
-    "secretary", "commissioner", "acp", "constable", "clerk", "writer", "reader", "collector",
-    # Report boilerplate / terms
-    "signature", "sd", "copy", "report", "reports", "daily", "forecast", "alert", "alerts", 
-    "subject", "sub", "date", "time", "hour", "hours", "hrs", "meeting", "meetings", 
-    "programme", "event", "events", "incident", "incidents", "activity", "activities", 
-    "protest", "protests", "strike", "strikes", "agitation", "agitations", "dharna", 
-    "dharnas", "march", "marches", "rally", "rallies", "campaign", "campaigns", 
-    "conference", "conferences", "seminar", "case", "cases", "crime", "crimes", 
-    "ipc", "crpc", "uapa", "act", "acts", "section", "sections", "law", "order", 
-    "security", "intelligence", "station", "stations", "office", "offices", 
-    "headquarters", "hq", "branch", "division", "committee", "organisation", 
-    "organization", "panchayat", "panchayats", "district", "village", "house", 
-    "city", "range", "ssb", "yours", "faithfully", "sincerely", "forwarded", 
-    "submitted", "received", "sender", "recipient", "topic", "cadre", "cadres",
-    "accused", "protester", "protesters", "member", "members", "leader", "leaders"
-}
-
-# Alias for backward compatibility in extract_person_names
-STOP_WORDS = JUNK_WORDS
 
 def _is_valid_person_name(name: str) -> bool:
-    """Return True if *name* is a plausible person name (not a place / org / junk)."""
+    """Structural heuristic: rejects obviously non-name strings.
+
+    This does NOT do vocabulary / dictionary look-ups.  Semantic
+    classification (person vs. place vs. junk) is handled exclusively
+    by the LLM in NEREngine.classify_candidates().
+    """
     if not name or len(name.strip()) < 3:
         return False
-        
-    # Acronym filtering: if any token is completely uppercase and length 2 to 4
+
     tokens = [t.strip(".,()[]{}'\"-:") for t in name.split() if t.strip(".,()[]{}'\"-:")]
     if not tokens:
         return False
-        
+
+    # Reject pure acronyms (e.g. RSU, KMP, UAPA)
     for tok in tokens:
-        if tok.isupper() and 2 <= len(tok) <= 4:
+        if tok.isupper() and 2 <= len(tok) <= 5:
             return False
-            
-    low_tokens = [t.lower() for t in tokens]
-    
-    # Reject if any token is a known junk word
-    for tok in low_tokens:
-        if tok in JUNK_WORDS:
-            return False
-            
-    # Reject if every token is a place name
-    if all(tok in PLACE_NAMES for tok in low_tokens):
+
+    # Reject if contains digits or special characters (not a name)
+    joined = " ".join(tokens)
+    if re.search(r'\d', joined):
         return False
-        
+
     # Single-word names must be >= 4 chars
     if len(tokens) == 1 and len(tokens[0]) < 4:
         return False
-        
+
+    # Reject if more than 5 words (sentence fragment, not a name)
+    if len(tokens) > 5:
+        return False
+
     return True
 
 
@@ -395,6 +350,37 @@ class PersonProfile:
                 val = m.group(2).strip()
                 self.data[key] = val
 
+        self.relations = []
+        self.cases = []
+        
+        # Parse Relations Table (Table 0)
+        if len(doc.tables) > 0:
+            t0 = doc.tables[0]
+            for row in t0.rows[1:]:
+                cells = [c.text.strip() for c in row.cells]
+                if len(cells) >= 5 and any(cells[1:]):
+                    self.relations.append({
+                        "name": cells[1],
+                        "relation": cells[2],
+                        "address": cells[3],
+                        "mobile": cells[4]
+                    })
+                    
+        # Parse Case Details Table (Table 1)
+        if len(doc.tables) > 1:
+            t1 = doc.tables[1]
+            for row in t1.rows[1:]:
+                cells = [c.text.strip() for c in row.cells]
+                if len(cells) >= 7 and any(cells[1:]):
+                    self.cases.append({
+                        "fir": cells[1],
+                        "sections": cells[2],
+                        "police_station": cells[3],
+                        "brief": cells[4],
+                        "status": cells[5],
+                        "co_accused": cells[6]
+                    })
+
     @property
     def name(self) -> str:
         return self.data.get("Name of Person", "").strip()
@@ -525,7 +511,7 @@ def extract_candidate_names_from_text(text: str) -> list:
     - Clean translation typings (like Sri.S.Bibin -> Sri S Bibin)
     - Split text on punctuation (commas, semicolons, parentheses) and written numbers/prepositions
       *before* extracting Title Case words to prevent merged name lists.
-    - Filter candidate sequences using strict JUNK_WORDS and PLACE_NAMES lists via _is_valid_person_name.
+    - Filter candidate sequences using structural heuristics via _is_valid_person_name.
     - Restrict name sequences to at most 3 words.
     """
     if not text:
@@ -738,10 +724,10 @@ def create_new_profile(
 
 def _append_to_relations_table(table, rel_data: dict):
     """Append a relative entry to Table 0 (Relations), filling empty rows first."""
-    name = rel_data.get("name", "").strip()
-    relation = rel_data.get("relation", "").strip()
-    address = rel_data.get("address", "").strip()
-    mobile = rel_data.get("mobile", "").strip()
+    name     = _to_str(rel_data.get("name")).strip()
+    relation = _to_str(rel_data.get("relation")).strip()
+    address  = _to_str(rel_data.get("address")).strip()
+    mobile   = _to_str(rel_data.get("mobile")).strip()
     if not name:
         return
 
@@ -778,14 +764,23 @@ def _append_to_relations_table(table, rel_data: dict):
     target_row.cells[4].text = mobile
 
 
+def _to_str(val) -> str:
+    """Coerce LLM output to a plain string (handles lists, None, etc.)."""
+    if val is None:
+        return ""
+    if isinstance(val, list):
+        return ", ".join(str(v) for v in val)
+    return str(val)
+
+
 def _append_to_case_table(table, case_data: dict):
     """Append a case entry to Table 1 (Case Details), filling empty rows first."""
-    fir = case_data.get("fir_number", "").strip()
-    sections = case_data.get("under_sections", "").strip()
-    ps = case_data.get("police_station", "").strip()
-    brief = case_data.get("case_brief", "").strip()
-    status = case_data.get("case_status", "Under Investigation").strip()
-    co_accused = case_data.get("co_accused", "").strip()
+    fir        = _to_str(case_data.get("fir_number")).strip()
+    sections   = _to_str(case_data.get("under_sections")).strip()
+    ps         = _to_str(case_data.get("police_station")).strip()
+    brief      = _to_str(case_data.get("case_brief")).strip()
+    status     = _to_str(case_data.get("case_status") or "Under Investigation").strip()
+    co_accused = _to_str(case_data.get("co_accused")).strip()
     
     # We need at least one of these to consider it a valid case entry
     if not (fir or sections or brief):
@@ -846,7 +841,7 @@ def update_profile_activity(
         elif not isinstance(org, dict):
             org = {}
 
-        brief_hist = structured_data.get("brief_history", "").strip()
+        brief_hist = _to_str(structured_data.get("brief_history")).strip()
 
         # Map target fields in the profile paragraphs (safely preserve existing data)
         for para in doc.paragraphs:
@@ -855,35 +850,35 @@ def update_profile_activity(
             # Check for parentage
             if txt.startswith("Parentage Name"):
                 existing = txt.split("-", 1)[-1].strip()
-                parent_val = personal.get("parentage", "").strip()
+                parent_val = _to_str(personal.get("parentage")).strip()
                 if (not existing or existing == "-" or existing == "") and parent_val:
                     para.text = f"Parentage Name\t\t-\t{parent_val}"
                     
             # Check for address
             elif txt.startswith("Address"):
                 existing = txt.split("-", 1)[-1].strip()
-                addr_val = personal.get("address", "").strip()
+                addr_val = _to_str(personal.get("address")).strip()
                 if (not existing or existing == "-" or existing == "") and addr_val:
                     para.text = f"Address\t\t\t-\t{addr_val}"
 
             # Check for police station
             elif txt.startswith("Police Station"):
                 existing = txt.split("-", 1)[-1].strip()
-                ps_val = personal.get("police_station", "").strip()
+                ps_val = _to_str(personal.get("police_station")).strip()
                 if (not existing or existing == "-" or existing == "") and ps_val:
                     para.text = f"Police Station\t\t-\t{ps_val}"
 
             # Check for organization name
             elif txt.startswith("Organization name"):
                 existing = txt.split("-", 1)[-1].strip()
-                org_val = org.get("org_name", "").strip()
+                org_val = _to_str(org.get("org_name")).strip()
                 if (not existing or existing == "-" or existing == "") and org_val:
                     para.text = f"Organization name\t-\t{org_val}"
 
             # Check for organization remarks
             elif txt.startswith("Remarks") and para.text.startswith("Remarks"):
                 existing = txt.split("-", 1)[-1].strip()
-                rem_val = org.get("remarks", "").strip()
+                rem_val = _to_str(org.get("remarks")).strip()
                 if (not existing or existing == "-" or existing == "") and rem_val:
                     para.text = f"Remarks\t\t\t-\t{rem_val}"
 
@@ -946,7 +941,12 @@ def update_profile_activity(
         if len(doc.tables) > 1 and case_data:
             _append_to_case_table(doc.tables[1], case_data)
 
-    doc.save(profile_path)
+    try:
+        doc.save(profile_path)
+    except PermissionError:
+        print(f"  [Warning] Permission denied when saving profile: {profile_path}. It might be open in another application like Microsoft Word.")
+    except Exception as e:
+        print(f"  [Warning] Failed to save profile {profile_path}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -974,6 +974,18 @@ def generate_uo_note_text(profile: PersonProfile, use_ollama: bool = False, olla
         val = profile.data.get(key, "").strip()
         if val:
             lines.append(f"{key}: {val}")
+
+    # Include network relations
+    if hasattr(profile, "relations") and profile.relations:
+        lines.append("Relations:")
+        for rel in profile.relations:
+            lines.append(f"  - {rel['name']} ({rel['relation']}), Address: {rel['address']}, Mobile: {rel['mobile']}")
+
+    # Include case/crime details history
+    if hasattr(profile, "cases") and profile.cases:
+        lines.append("Criminal Case History:")
+        for c in profile.cases:
+            lines.append(f"  - FIR: {c['fir']}, Sections: {c['sections']}, Station: {c['police_station']}, Brief: {c['brief']}, Status: {c['status']}, Co-accused: {c['co_accused']}")
 
     summary = "\n".join(lines)
 
@@ -1295,7 +1307,7 @@ def extract_person_names(text: str) -> list:
     parent_names_clean = []
     
     for pn in parent_names:
-        words = [w for w in pn.split() if w.lower() not in HONORIFICS and w.lower() not in STOP_WORDS]
+        words = [w for w in pn.split() if w.lower() not in HONORIFICS]
         if words:
             parent_names_clean.append(" ".join(words))
             
