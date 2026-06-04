@@ -27,6 +27,7 @@ from utils import (
     is_malayalam,
     translate_ml_to_en,
     build_daily_report,
+    build_less_priority_report,
     extract_district_tag,
     parse_social_media_file,
     load_profile_database,
@@ -248,6 +249,7 @@ Analyze the following intelligence report item and:
    - "event": for matters that have occurred or are currently ongoing (e.g. crimes, NDPS drug seizures, protests currently happening, incidents).
    - "forecast": for scheduled events, future plans, anticipated protests, upcoming temple festivals, or expected law and order issues.
    - "social_media": for intelligence reports regarding social media activity, Facebook posts, online news, video propaganda, or viral campaigns.
+   - "not_needed": for events, activities, or reports that are not important or not relevant to current events (e.g., trivial occurrences, crowded snack bars, minor events that do not pose law and order concerns, or generic non-actionable status reports).
 2. Compress/summarize the details into one concise English paragraph.
    - Preserve all names, organisation names, locations, dates, times, quantities, case/crime numbers, legal sections, and district/category tags if present.
    - Preserve whether the matter already happened, is continuing, or is scheduled/likely.
@@ -255,7 +257,7 @@ Analyze the following intelligence report item and:
    - Do not add facts, explanations, markdown, bullets, or numbering.
    - Output the result strictly in this JSON format:
      {{
-       "category": "event" or "forecast" or "social_media",
+       "category": "event" or "forecast" or "social_media" or "not_needed",
        "summary": "your single-paragraph summary here"
      }}
 
@@ -284,11 +286,13 @@ Source text:
                 data = json.loads(json_str)
                 category = data.get("category", default_category).strip().lower()
                 # Map category if needed
-                if category not in ["event", "forecast", "social_media"]:
+                if category not in ["event", "forecast", "social_media", "not_needed"]:
                     if "social" in category or "media" in category:
                         category = "social_media"
                     elif "fore" in category:
                         category = "forecast"
+                    elif "not" in category or "need" in category or "less" in category or "priority" in category:
+                        category = "not_needed"
                     else:
                         category = "event"
                 summary = data.get("summary", text).strip()
@@ -348,6 +352,8 @@ def cmd_consolidate(args):
     forecast_raw_texts = []
     social_media_items = []
     social_media_raw_texts = []
+    not_needed_paragraphs = []
+    not_needed_raw_texts = []
     failed_files = []
     batch_engines = []
 
@@ -424,6 +430,8 @@ def cmd_consolidate(args):
                             category = "forecast"
                         elif "/EC/" in item_en_upper:
                             category = "event"
+                        elif "/NN/" in item_en_upper or "/NOT_NEEDED/" in item_en_upper:
+                            category = "not_needed"
                         summary = item_en
                         
                     # District tag handling
@@ -441,6 +449,9 @@ def cmd_consolidate(args):
                     elif category == "forecast":
                         forecast_paragraphs.append(summary)
                         forecast_raw_texts.append(item_en)
+                    elif category == "not_needed":
+                        not_needed_paragraphs.append(summary)
+                        not_needed_raw_texts.append(item_en)
                     else:
                         event_paragraphs.append(summary)
                         event_raw_texts.append(item_en)
@@ -453,6 +464,7 @@ def cmd_consolidate(args):
     print(f"  Total events extracted: {len(event_paragraphs)}")
     print(f"  Total forecasts extracted: {len(forecast_paragraphs)}")
     print(f"  Total social media items: {len(social_media_items)}")
+    print(f"  Total less priority / not needed items: {len(not_needed_paragraphs)}")
 
     # Check if translation engines switched mid-batch
     translated_engines = [e for e in batch_engines if e not in ("none", "failed")]
@@ -485,6 +497,27 @@ def cmd_consolidate(args):
     )
 
     print(f"\n[Success] Daily report saved to: {output_path}")
+
+    # 5.0) Build the less priority report if there are any not needed items
+    if not_needed_paragraphs:
+        LESS_PRIORITY_REPORT_DIR = os.path.join(BASE_DIR, "Daily less priority report")
+        os.makedirs(LESS_PRIORITY_REPORT_DIR, exist_ok=True)
+        less_priority_filename = f"Daily less priority report {date_str}.docx"
+        less_priority_path = os.path.join(LESS_PRIORITY_REPORT_DIR, less_priority_filename)
+        
+        # Avoid overwriting existing reports
+        if os.path.exists(less_priority_path) and not args.force:
+            less_priority_path = os.path.join(
+                LESS_PRIORITY_REPORT_DIR,
+                f"Daily less priority report {date_str}_generated.docx",
+            )
+            
+        build_less_priority_report(
+            report_date=date_str,
+            items=not_needed_paragraphs,
+            output_path=less_priority_path,
+        )
+        print(f"[Success] Less priority report saved to: {less_priority_path}")
 
     # 5.1) Run structural validation
     input_counts = {

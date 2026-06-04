@@ -816,6 +816,82 @@ def _append_to_case_table(table, case_data: dict):
     target_row.cells[6].text = co_accused
 
 
+def _dedup_semicolon_field(existing: str, new_value: str) -> str:
+    """Append new_value to a semicolon-separated field only if it's not already present.
+
+    Parameters
+    ----------
+    existing : str
+        Current field content (may contain multiple "; "-separated entries).
+    new_value : str
+        The new entry to append.
+
+    Returns
+    -------
+    str
+        The merged field content, with new_value appended only if it wasn't
+        already present (exact match after stripping).
+    """
+    if not new_value:
+        return existing
+    if not existing:
+        return new_value
+
+    entries = [e.strip() for e in existing.split("; ") if e.strip()]
+    new_clean = new_value.strip()
+
+    # Exact match check
+    if new_clean in entries:
+        return existing
+
+    entries.append(new_clean)
+    return "; ".join(entries)
+
+
+def _dedup_description_field(existing: str, new_value: str, match_len: int = 80) -> str:
+    """Append new_value to a description field only if no existing entry
+    shares its first `match_len` characters (fuzzy dedup).
+
+    The LLM may produce slightly different summaries of the same event
+    across runs, but the first ~80 chars are usually stable.  This avoids
+    appending the same report paragraph 8 times.
+
+    Parameters
+    ----------
+    existing : str
+        Current field content (may contain multiple "; "-separated entries).
+    new_value : str
+        The new description entry to append.
+    match_len : int
+        Number of leading characters to compare for fuzzy matching.
+
+    Returns
+    -------
+    str
+        The merged field content, with new_value appended only if no
+        existing entry shares its first match_len characters.
+    """
+    if not new_value:
+        return existing
+    if not existing:
+        return new_value
+
+    entries = [e.strip() for e in existing.split("; ") if e.strip()]
+    new_clean = new_value.strip()
+    new_prefix = new_clean[:match_len].lower()
+
+    for entry in entries:
+        # Exact match
+        if entry == new_clean:
+            return existing
+        # Fuzzy prefix match — same event, slightly different tail
+        if entry[:match_len].lower() == new_prefix:
+            return existing
+
+    entries.append(new_clean)
+    return "; ".join(entries)
+
+
 def update_profile_activity(
     profile_path: str,
     activity_name: str = "",
@@ -888,37 +964,33 @@ def update_profile_activity(
                 if (not existing or existing == "-" or existing == "") and brief_hist:
                     para.text = f"Brief History of Person \t-\t{brief_hist}"
 
-    # 2. Update Activities section paragraphs
+    # 2. Update Activities section paragraphs (with deduplication)
     for para in doc.paragraphs:
         txt = para.text.strip()
 
         if txt.startswith("Name of activity"):
             existing = txt.split("-", 1)[-1].strip()
-            if existing and activity_name:
-                para.text = f"Name of activity\t\t-{existing}; {activity_name}"
-            elif activity_name:
-                para.text = f"Name of activity\t\t-{activity_name}"
+            merged = _dedup_semicolon_field(existing, activity_name)
+            if merged != existing or (not existing and activity_name):
+                para.text = f"Name of activity\t\t-{merged}"
 
         elif txt.startswith("Activity Description"):
             existing = txt.split("-", 1)[-1].strip()
-            if existing and activity_desc:
-                para.text = f"Activity Description\t-{existing}; {activity_desc}"
-            elif activity_desc:
-                para.text = f"Activity Description\t-{activity_desc}"
+            merged = _dedup_description_field(existing, activity_desc)
+            if merged != existing or (not existing and activity_desc):
+                para.text = f"Activity Description\t-{merged}"
 
         elif txt.startswith("Date of Occurrence"):
             existing = txt.split("-", 1)[-1].strip()
-            if existing and activity_date:
-                para.text = f"Date of Occurrence\t-{existing}; {activity_date}"
-            elif activity_date:
-                para.text = f"Date of Occurrence\t-{activity_date}"
+            merged = _dedup_semicolon_field(existing, activity_date)
+            if merged != existing or (not existing and activity_date):
+                para.text = f"Date of Occurrence\t-{merged}"
 
         elif txt.startswith("Persons Involved"):
             existing = txt.split("-", 1)[-1].strip()
-            if existing and persons_involved:
-                para.text = f"Persons Involved Details\t-{existing}; {persons_involved}"
-            elif persons_involved:
-                para.text = f"Persons Involved Details\t-{persons_involved}"
+            merged = _dedup_semicolon_field(existing, persons_involved)
+            if merged != existing or (not existing and persons_involved):
+                para.text = f"Persons Involved Details\t-{merged}"
 
     # 3. Update Table 0 (Relations) and Table 1 (Case Details)
     if structured_data:
@@ -1439,3 +1511,67 @@ def extract_details_from_docx_paragraphs(paragraphs: list) -> str:
         details_paras.append(p)
         
     return "\n".join(details_paras)
+
+
+def build_less_priority_report(
+    report_date: str,
+    items: list,
+    output_path: str,
+):
+    """Build a consolidated DOCX file for not important / less priority reports.
+
+    Parameters
+    ----------
+    report_date : str
+        Date string in dd.mm.yyyy format.
+    items : list of str
+        Unimportant event paragraphs (in English).
+    output_path : str
+        Where to save the output .docx.
+    """
+    doc = Document()
+
+    # Page margins
+    for section in doc.sections:
+        section.top_margin = Cm(2.54)
+        section.bottom_margin = Cm(2.54)
+        section.left_margin = Cm(2.54)
+        section.right_margin = Cm(2.54)
+
+    # Default font
+    style = doc.styles["Normal"]
+    font = style.font
+    font.name = "Times New Roman"
+    font.size = Pt(12)
+
+    # --- Header ---
+    p = doc.add_paragraph("// Secret//")
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    doc.add_paragraph()  # blank line
+
+    p3 = doc.add_paragraph("Daily Less Priority / Not Needed Reports for Human Verification")
+    p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    doc.add_paragraph()  # blank line
+
+    header_text = f"Unimportant / Not Needed Reports ({report_date})"
+    doc.add_paragraph(header_text)
+
+    # --- Items ---
+    for i, item in enumerate(items, 1):
+        doc.add_paragraph(f"{i})\t\t{item}")
+
+    # --- Footer ---
+    doc.add_paragraph()
+    p_footer1 = doc.add_paragraph("Yours faithfully,")
+    p_footer1.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    doc.add_paragraph()
+
+    p_footer2 = doc.add_paragraph("DySP, DSDB  for SP (IS)")
+    p_footer2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    doc.save(output_path)
+    return output_path
+
