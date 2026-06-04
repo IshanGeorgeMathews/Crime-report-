@@ -639,9 +639,8 @@ def _sync_profiles_from_texts(texts: list, report_date: str, use_ollama: bool):
     # Keep a mutable copy of the profiles list
     profiles = list(profiles)
 
-    # Initialize/load graphical database
-    graph_db_path = os.path.join(BASE_DIR, "graph_db.json")
-    db = GraphDatabase(graph_db_path)
+    # Initialize Neo4j graph database connection
+    db = GraphDatabase()
 
     # Purge any legacy junk nodes before processing new data
     removed = db.clean_junk_nodes()
@@ -664,7 +663,7 @@ def _sync_profiles_from_texts(texts: list, report_date: str, use_ollama: bool):
     # Initialize GNN manager for potential disambiguation
     gnn = GNNModelManager(db)
     # Train GNN on the initial graph if it has nodes, to have initial embeddings
-    if db.G.number_of_nodes() > 3:
+    if db.node_count() > 3:
         gnn.train(epochs=50)
 
     for idx, text in enumerate(texts):
@@ -873,8 +872,8 @@ def _sync_profiles_from_texts(texts: list, report_date: str, use_ollama: bool):
                     elif not isinstance(org_info, dict):
                         org_info = {}
                         
-                    org_name = org_info.get("org_name", "").strip()
-                    org_remarks = org_info.get("remarks", "").strip()
+                    org_name = (org_info.get("org_name") or "").strip()
+                    org_remarks = (org_info.get("remarks") or "").strip()
                     if org_name:
                         org_id = db.add_organization(org_name, org_remarks)
                         if org_id:
@@ -888,10 +887,10 @@ def _sync_profiles_from_texts(texts: list, report_date: str, use_ollama: bool):
                     elif not isinstance(case_info, dict):
                         case_info = {}
                         
-                    fir = case_info.get("fir_number", "").strip()
-                    sections = case_info.get("under_sections", "").strip()
-                    ps = case_info.get("police_station", "").strip()
-                    brief = case_info.get("case_brief", "").strip()
+                    fir = (case_info.get("fir_number") or "").strip()
+                    sections = (case_info.get("under_sections") or "").strip()
+                    ps = (case_info.get("police_station") or "").strip()
+                    brief = (case_info.get("case_brief") or "").strip()
                     
                     case_id = fir if fir else (case_info.get("case_id") or "")
                     if not case_id and (sections or brief):
@@ -910,19 +909,20 @@ def _sync_profiles_from_texts(texts: list, report_date: str, use_ollama: bool):
     # Apply Cross-Paragraph High-Frequency Edge Guards
     for name in new_names_in_run:
         node_id = f"ind_{name.lower().replace(' ', '_')}"
-        if not db.G.has_node(node_id):
+        if not db.has_node(node_id):
             continue
             
         connected_crimes = 0
-        for neighbor in db.G.neighbors(node_id):
-            if db.G.nodes[neighbor].get("type") == "crime":
+        for neighbor_id in db.neighbors(node_id):
+            neighbor_data = db.get_node(neighbor_id)
+            if neighbor_data.get("type") == "crime":
                 connected_crimes += 1
                 
         if connected_crimes > 3:
             print(f"  [High-Frequency Edge Guard] Suspect '{name}' is linked to {connected_crimes} crime nodes (anomaly). Routing to review queue.")
             # Flag suspect node as Extraction Anomaly in the graph
-            db.G.nodes[node_id]["anomaly"] = "Extraction Anomaly"
-            db.G.nodes[node_id]["extraction_anomaly"] = True
+            db.set_node_property(node_id, "anomaly", "Extraction Anomaly")
+            db.set_node_property(node_id, "extraction_anomaly", True)
             
             # Route the profile to the Review Queue (Name_review.docx)
             safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
@@ -988,13 +988,10 @@ def cmd_generate_uo(args):
 
 def cmd_graph_query(args):
     """Query the graph database and print statistics or associate recommendations."""
-    graph_db_path = os.path.join(BASE_DIR, "graph_db.json")
-    if not os.path.exists(graph_db_path):
-        print(f"[Error] Graph database file does not exist yet: {graph_db_path}")
-        print("Please run 'consolidate' first to build the graph database.")
+    db = GraphDatabase()
+    if not db.is_connected():
+        print("[Error] Cannot connect to Neo4j. Is the server running?")
         sys.exit(1)
-
-    db = GraphDatabase(graph_db_path)
 
     if args.stats:
         stats = db.get_stats()
@@ -1013,11 +1010,11 @@ def cmd_graph_query(args):
     if args.person:
         person_name = args.person
         node_id = f"ind_{person_name.lower().replace(' ', '_')}"
-        if not db.G.has_node(node_id):
-            # Try fuzzy search in node keys
+        if not db.has_node(node_id):
+            # Try fuzzy search
             found_matches = []
-            for nid, ndata in db.G.nodes(data=True):
-                if ndata.get("type") == "individual" and person_name.lower() in ndata.get("name", "").lower():
+            for nid, ndata in db.get_all_nodes_with_data():
+                if ndata.get("type") == "individual" and person_name.lower() in (ndata.get("name") or "").lower():
                     found_matches.append(ndata.get("name"))
             if found_matches:
                 print(f"[Info] Person '{person_name}' not found. Did you mean one of these? {', '.join(found_matches)}")
@@ -1025,7 +1022,7 @@ def cmd_graph_query(args):
                 print(f"[Error] Person '{person_name}' not found in the graph database.")
             return
 
-        ndata = db.G.nodes[node_id]
+        ndata = db.get_node(node_id)
         print(f"\n=== Individual Profile Node: {ndata.get('name')} ===")
         if ndata.get("pp_id"):
             print(f"  PP ID:          {ndata.get('pp_id')}")
@@ -1037,18 +1034,19 @@ def cmd_graph_query(args):
             print(f"  Activity Type:  {ndata.get('activity_type')}")
 
         print("\nDirect Graph Connections:")
-        neighbors = list(db.G.neighbors(node_id))
+        neighbor_ids = db.neighbors(node_id)
         crimes = []
         records = []
         associates = []
-        for n in neighbors:
-            ntype = db.G.nodes[n].get("type")
-            name = db.G.nodes[n].get("name") or db.G.nodes[n].get("date") or n
-            edge_data = db.G[node_id][n]
+        for n in neighbor_ids:
+            n_data = db.get_node(n)
+            ntype = n_data.get("type")
+            name = n_data.get("name") or n_data.get("date") or n
+            edge_data = db.get_edge(node_id, n)
             rel_type = edge_data.get("type", "connected")
             
             if ntype == "crime":
-                crimes.append(db.G.nodes[n].get("text"))
+                crimes.append(n_data.get("text"))
             elif ntype == "record":
                 records.append(name)
             elif ntype == "individual":
@@ -1094,14 +1092,11 @@ def cmd_graph_query(args):
 # ===================================================================
 
 def cmd_clean_graph(args):
-    """Remove junk Individual nodes from the graph database and save the cleaned graph."""
-    graph_db_path = os.path.join(BASE_DIR, "graph_db.json")
-    if not os.path.exists(graph_db_path):
-        print(f"[Error] Graph database file does not exist: {graph_db_path}")
-        print("Please run 'consolidate' first to build the graph database.")
+    """Remove junk Individual nodes from the graph database."""
+    db = GraphDatabase()
+    if not db.is_connected():
+        print("[Error] Cannot connect to Neo4j. Is the server running?")
         sys.exit(1)
-
-    db = GraphDatabase(graph_db_path)
     stats_before = db.get_stats()
 
     print("\n=== Cleaning Graph Database ===")
@@ -1119,6 +1114,84 @@ def cmd_clean_graph(args):
         print(f"  Individual nodes after:  {stats_after['individual_nodes']}")
         print(f"[Success] Removed {removed} junk node(s) and saved cleaned graph.")
     print("=================================")
+
+
+# ===================================================================
+# COMMAND: migrate-neo4j
+# ===================================================================
+
+def cmd_migrate_neo4j(args):
+    """Import existing graph_db.json data into Neo4j."""
+    import networkx as nx
+    import json
+
+    graph_db_path = os.path.join(BASE_DIR, "graph_db.json")
+    if not os.path.exists(graph_db_path):
+        print(f"[Error] graph_db.json not found at: {graph_db_path}")
+        print("Nothing to migrate.")
+        return
+
+    # Load old NetworkX data
+    print(f"Loading graph_db.json from {graph_db_path}...")
+    with open(graph_db_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    G = nx.node_link_graph(data)
+    print(f"  Old graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+
+    # Connect to Neo4j
+    db = GraphDatabase()
+    if not db.is_connected():
+        print("[Error] Cannot connect to Neo4j. Is the server running?")
+        return
+
+    # Import nodes
+    label_map = {
+        "individual": "Individual",
+        "crime": "Crime",
+        "record": "Record",
+        "organization": "Organization",
+        "case": "Case",
+    }
+    migrated_nodes = 0
+    for nid, ndata in G.nodes(data=True):
+        node_type = ndata.get("type", "unknown")
+        label = label_map.get(node_type, "Unknown")
+        # Build property dict — exclude 'id' (used by NetworkX) since we use node_id
+        props = {k: v for k, v in ndata.items() if k != "id"}
+        props["node_id"] = nid
+        # Build Cypher SET clauses
+        set_clauses = ", ".join([f"n.`{k}` = ${k}" for k in props.keys()])
+        query = f"MERGE (n:{label} {{node_id: $node_id}}) SET {set_clauses}"
+        db._run(query, **props)
+        migrated_nodes += 1
+
+    print(f"  Migrated {migrated_nodes} nodes to Neo4j.")
+
+    # Import edges
+    migrated_edges = 0
+    for u, v, edata in G.edges(data=True):
+        rel_type = edata.get("type", "CONNECTED")
+        weight = edata.get("weight", 1.0)
+        # Use dynamic relationship type
+        query = f"""
+            MATCH (a {{node_id: $uid}}), (b {{node_id: $vid}})
+            MERGE (a)-[r:{rel_type}]-(b)
+            SET r.weight = $weight, r.type = $rel_type
+        """
+        db._run(query, uid=u, vid=v, weight=weight, rel_type=rel_type)
+        migrated_edges += 1
+
+    print(f"  Migrated {migrated_edges} edges to Neo4j.")
+
+    # Verify
+    stats = db.get_stats()
+    print(f"\n  Neo4j now has: {stats['total_nodes']} nodes, {stats['total_edges']} edges")
+
+    # Backup old file
+    backup_path = graph_db_path + ".bak"
+    os.rename(graph_db_path, backup_path)
+    print(f"  Renamed graph_db.json -> graph_db.json.bak")
+    print("\n[Success] Migration complete!")
 
 
 # ===================================================================
@@ -1220,6 +1293,13 @@ Examples:
         help="Remove junk/invalid Individual nodes from the graph database",
     )
     p_clean.set_defaults(func=cmd_clean_graph)
+
+    # --- migrate-neo4j ---
+    p_migrate = subparsers.add_parser(
+        "migrate-neo4j",
+        help="Import existing graph_db.json into Neo4j (one-time migration)",
+    )
+    p_migrate.set_defaults(func=cmd_migrate_neo4j)
 
     args = parser.parse_args()
 

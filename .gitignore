@@ -7,8 +7,10 @@ PP & Uo Note Dummy-20260427T091522Z-3-001 real/
 
 # Generated graph/local data
 graph_db.json
+graph_db.json.bak
 graph_db_audit.json
 review_registry.json
+*.bak
 
 # Generated or private documents
 *.docx
