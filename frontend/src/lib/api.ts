@@ -36,7 +36,7 @@ api.interceptors.response.use(
 );
 
 // MOCK ADAPTER FOR LOCAL UI-ONLY VALIDATION
-const VITE_USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true' || true; // Default to true in development without backend
+const VITE_USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false';
 
 if (VITE_USE_MOCK) {
   console.warn('[KPIP API] Operating in MOCK mode. Network requests are mocked locally.');

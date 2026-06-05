@@ -106,7 +106,7 @@ export const DashboardPage: React.FC = () => {
           </div>
         </div>
       </div>
-      
+
       <div className="bg-white p-6 rounded-xl shadow-premium border border-slate-100 space-y-4">
         <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Quick Actions</h2>
         <div className="flex flex-wrap gap-3">

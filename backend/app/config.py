@@ -1,0 +1,66 @@
+import os
+from typing import List, Union
+from pydantic import AnyHttpUrl, validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    PROJECT_NAME: str = "Kerala Police Intelligence Platform"
+    API_V1_STR: str = "/api/v1"
+    
+    # JWT Auth
+    SECRET_KEY: str = "secret-key-keep-it-safe-and-change-in-production"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours (single shift)
+    
+    # Databases
+    # Defaults to SQLite locally for easy testing without PG setup
+    DATABASE_URL: str = "sqlite+aiosqlite:///./kpip.db"
+    
+    NEO4J_URI: str = "bolt://localhost:7687"
+    NEO4J_USER: str = "neo4j"
+    NEO4J_PASSWORD: str = "password"
+    
+    QDRANT_HOST: str = "localhost"
+    QDRANT_PORT: int = 6333
+    
+    OLLAMA_URL: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "gemma2:9b"
+    
+    # CORS
+    BACKEND_CORS_ORIGINS: List[str] = [
+        "http://localhost:5173",  # Vite dev server
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+    ]
+
+    @validator("BACKEND_CORS_ORIGINS", pre=True)
+    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:
+        if isinstance(v, str) and not v.startswith("["):
+            return [i.strip() for i in v.split(",")]
+        elif isinstance(v, (list, str)):
+            return v
+        raise ValueError(v)
+
+    # Directories
+    UPLOAD_DIR: str = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads"
+    )
+    
+    PP_DIR: str = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "PP & Uo Note Dummy-20260427T091522Z-3-001",
+        "PP & Uo Note Dummy"
+    )
+    
+    PP_TEMPLATE: str = os.path.join(PP_DIR, "PP Form details.docx")
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True
+    )
+
+settings = Settings()
+
+# Ensure directories exist
+os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
