@@ -341,7 +341,7 @@ class PersonProfile:
 
     def _parse(self):
         doc = Document(self.filepath)
-        kv_re = re.compile(r"^(.+?)\s*[-–]\s*(.*)$")
+        kv_re = re.compile(r"^(.+?)\s*[-–]\s*(.*)$", re.DOTALL)
         for p in doc.paragraphs:
             txt = p.text.strip()
             m = kv_re.match(txt)

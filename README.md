@@ -11,6 +11,16 @@ Automates the daily workflow of the IS Division, SSB, Kerala Police:
 
 ---
 
+## Architecture Planning
+
+For the proposed frontend/API platform architecture, including upload workflows,
+queue tracking, RBAC, Neo4j/Qdrant/local LLM integration, deployment, storage,
+and monitoring, see:
+
+- [`docs/frontend-system-architecture-plan.md`](docs/frontend-system-architecture-plan.md)
+
+---
+
 ## Directory Structure
 
 ```
