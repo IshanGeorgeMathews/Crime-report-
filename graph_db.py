@@ -65,7 +65,7 @@ load_env()
 # ---------------------------------------------------------------------------
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "DigitalUniversity")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "prosecutorreport")
 NEO4J_AUTH = (NEO4J_USER, NEO4J_PASSWORD)
 
@@ -400,6 +400,9 @@ class GraphDatabase:
 
     def set_node_property(self, node_id: str, key: str, value):
         """Set a single property on a node."""
+        import re
+        if not re.match(r"^[a-zA-Z0-9_]+$", key):
+            raise ValueError(f"Invalid Cypher property key: {key}")
         # Use a safe parameterized approach
         self._run(
             f"MATCH (n {{node_id: $nid}}) SET n.`{key}` = $val",

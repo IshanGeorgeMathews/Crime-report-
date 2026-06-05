@@ -27,11 +27,12 @@ class NEREngine:
         try:
             from transformers import pipeline
             import torch
-            print("  [NER Engine] Loading Hugging Face dslim/bert-base-NER model...")
+            model_name = os.getenv("NER_MODEL_PATH", "dslim/bert-base-NER")
+            print(f"  [NER Engine] Loading Hugging Face {model_name} model...")
             device = 0 if torch.cuda.is_available() else -1
             self.ner_pipeline = pipeline(
                 "ner", 
-                model="dslim/bert-base-NER", 
+                model=model_name, 
                 aggregation_strategy="simple", 
                 device=device
             )

@@ -18,12 +18,18 @@ class Settings(BaseSettings):
     NEO4J_URI: str = "bolt://localhost:7687"
     NEO4J_USER: str = "neo4j"
     NEO4J_PASSWORD: str = "password"
+    NEO4J_DATABASE: str = "prosecutorreport"
     
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = 6333
     
     OLLAMA_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "gemma2:9b"
+    
+    # Model Cache Paths for Air-Gapped Intranet Environments
+    NER_MODEL_PATH: str = "dslim/bert-base-NER"
+    TRANSLATION_MODEL_PATH: str = "ai4bharat/indictrans2-indic-en-1B"
+    SENTENCE_TRANSFORMER_MODEL_PATH: str = "all-MiniLM-L6-v2"
     
     # CORS
     BACKEND_CORS_ORIGINS: List[str] = [

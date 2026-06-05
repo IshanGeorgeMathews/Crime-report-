@@ -164,9 +164,9 @@ class TranslationEngine:
             import torch
             from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
             
-            print("  [IndicTrans2] Loading ai4bharat/indictrans2-indic-en-1B model...")
+            model_name = os.getenv("TRANSLATION_MODEL_PATH", "ai4bharat/indictrans2-indic-en-1B")
+            print(f"  [IndicTrans2] Loading {model_name} model...")
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
-            model_name = "ai4bharat/indictrans2-indic-en-1B"
             
             # Load tokenizer and model
             self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)

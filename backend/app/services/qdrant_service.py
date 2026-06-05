@@ -24,8 +24,8 @@ class QdrantService:
             self.client = QdrantClient(host=self.host, port=self.port, timeout=5.0)
             
             # Load sentence transformer model
-            print("[Qdrant Service] Loading SentenceTransformer 'all-MiniLM-L6-v2'...")
-            self.model = SentenceTransformer('all-MiniLM-L6-v2')
+            print(f"[Qdrant Service] Loading SentenceTransformer '{settings.SENTENCE_TRANSFORMER_MODEL_PATH}'...")
+            self.model = SentenceTransformer(settings.SENTENCE_TRANSFORMER_MODEL_PATH)
             
             # Test connectivity and create collections if they don't exist
             collections = ["report_items", "profiles", "crimes"]

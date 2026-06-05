@@ -5,7 +5,7 @@ import shutil
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, BackgroundTasks
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import delete
@@ -109,6 +109,18 @@ async def upload_for_consolidation(
             detail=f"Invalid date format: {date}. Must be DD.MM.YYYY"
         )
         
+    # Check total & individual file size (10MB limit)
+    MAX_FILE_SIZE = 10 * 1024 * 1024
+    for f in files:
+        f.file.seek(0, os.SEEK_END)
+        size = f.file.tell()
+        f.file.seek(0)  # Reset pointer
+        if size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File {f.filename} exceeds the maximum size limit of 10MB."
+            )
+        
     job_id = str(uuid.uuid4())
     
     # Create background task directory
@@ -116,9 +128,14 @@ async def upload_for_consolidation(
     os.makedirs(temp_dir, exist_ok=True)
     
     # Write files to disk
+    import re
     for f in files:
-        # Sanitize filename
-        safe_name = os.path.basename(f.filename)
+        # Sanitize filename: alphanumeric, space, dot, underscore, dash only
+        base_name = os.path.basename(f.filename)
+        safe_name = re.sub(r'[^a-zA-Z0-9_.\s-]', '', base_name).strip()
+        if not safe_name:
+            safe_name = f"uploaded_{uuid.uuid4().hex}.docx"
+            
         dest_path = os.path.join(temp_dir, safe_name)
         with open(dest_path, "wb") as buffer:
             shutil.copyfileobj(f.file, buffer)
@@ -135,10 +152,10 @@ async def upload_for_consolidation(
     db.add(job)
     await db.commit()
     
-    # Trigger background pipeline execution
+    # Trigger background pipeline execution (without request-scoped db session)
     background_tasks.add_task(
         consolidation_service.run_consolidation,
-        db, job_id, date, temp_dir
+        job_id, date, temp_dir
     )
     
     return {"success": True, "data": {"jobId": job_id}}
@@ -311,11 +328,10 @@ async def download_daily_report(report_id: str, db: AsyncSession = Depends(get_d
     if not os.path.exists(fpath):
         raise HTTPException(status_code=404, detail="Consolidated report file not found on disk")
         
-    file_like = open(fpath, "rb")
-    return StreamingResponse(
-        file_like,
+    return FileResponse(
+        fpath,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="IS_Daily_Report_{report.report_date}.docx"'}
+        filename=f"IS_Daily_Report_{report.report_date}.docx"
     )
 
 @router.get("/reports/{report_id}/less-priority/download")
@@ -331,11 +347,10 @@ async def download_less_priority_report(report_id: str, db: AsyncSession = Depen
     if not os.path.exists(fpath):
         raise HTTPException(status_code=404, detail="Less priority report file not found on disk")
         
-    file_like = open(fpath, "rb")
-    return StreamingResponse(
-        file_like,
+    return FileResponse(
+        fpath,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="Less_Priority_Report_{report.report_date}.docx"'}
+        filename=f"Less_Priority_Report_{report.report_date}.docx"
     )
 
 # --- Profiles Endpoints ---
@@ -404,11 +419,10 @@ async def download_profile_docx(profile_id: str, db: AsyncSession = Depends(get_
     if not fpath or not os.path.exists(fpath):
         raise HTTPException(status_code=404, detail="suspect dossier file not found on disk")
         
-    file_like = open(fpath, "rb")
-    return StreamingResponse(
-        file_like,
+    return FileResponse(
+        fpath,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{os.path.basename(fpath)}"'}
+        filename=os.path.basename(fpath)
     )
 
 @router.get("/profiles/{profile_id}/generate-uo")
@@ -418,11 +432,10 @@ async def generate_uo_note(profile_id: str, db: AsyncSession = Depends(get_db), 
     if not fpath or not os.path.exists(fpath):
         raise HTTPException(status_code=404, detail="Failed to generate UO note or profile not found")
         
-    file_like = open(fpath, "rb")
-    return StreamingResponse(
-        file_like,
+    return FileResponse(
+        fpath,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{os.path.basename(fpath)}"'}
+        filename=os.path.basename(fpath)
     )
 
 # --- Review Endpoints ---

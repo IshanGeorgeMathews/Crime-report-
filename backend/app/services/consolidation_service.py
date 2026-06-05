@@ -82,8 +82,10 @@ class ConsolidationService:
         db.add(event)
         await db.commit()
 
-    async def run_consolidation(self, db: AsyncSession, job_id: str, date_str: str, source_files_dir: str):
+    async def run_consolidation(self, job_id: str, date_str: str, source_files_dir: str):
         """Execute the full consolidation pipeline asynchronously."""
+        from app.db.session import AsyncSessionLocal
+        db = AsyncSessionLocal()
         try:
             # 1. Update status to Running
             await self.update_job(
@@ -423,14 +425,18 @@ class ConsolidationService:
                 current_step="Consolidation pipeline completed successfully",
                 result=result_summary
             )
+            await db.close()
             
         except Exception as e:
             import traceback
             traceback.print_exc()
-            await self.update_job(
-                db, job_id,
-                status="failed",
-                progress=100,
-                current_step=f"Failed: {str(e)}",
-                error_message=f"Pipeline error: {str(e)}"
-            )
+            try:
+                await self.update_job(
+                    db, job_id,
+                    status="failed",
+                    progress=100,
+                    current_step=f"Failed: {str(e)}",
+                    error_message=f"Pipeline error: {str(e)}"
+                )
+            finally:
+                await db.close()
