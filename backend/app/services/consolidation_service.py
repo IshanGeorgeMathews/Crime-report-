@@ -466,108 +466,149 @@ class ConsolidationService:
                     await db.commit()
 
 
-            # 3. Create Report in SQL DB
-            await self.update_job(
-                db, job_id,
-                status="profile_sync",
-                progress=65,
-                current_step="Writing consolidated report records to PostgreSQL"
-            )
-            
-            ref_number = f"KPIP/{datetime.now().year}/{date_str.replace('.', '/')}"
-            report = Report(
-                id=str(uuid.uuid4()),
-                report_date=date_str,
-                ref_number=ref_number,
-                event_count=len(event_paragraphs),
-                forecast_count=len(forecast_paragraphs),
-                social_media_count=len(social_media_items),
-                not_needed_count=len(not_needed_paragraphs),
-                job_id=job_id
-            )
-            db.add(report)
-            await db.flush()
-            
-            # Write Report Items
+            # 3. Create Report in SQL DB (optional — skip if PostgreSQL unavailable)
+            report = None
             all_items = []
-            sort_counter = 0
-            for idx, text in enumerate(event_paragraphs):
-                item = ReportItem(
-                    id=str(uuid.uuid4()), report_id=report.id, category="event",
-                    sort_order=sort_counter, raw_text=event_raw_texts[idx],
-                    translated_text=text, summary_text=text
+            try:
+                await self.update_job(
+                    db, job_id,
+                    status="profile_sync",
+                    progress=65,
+                    current_step="Writing consolidated report records to database"
                 )
-                db.add(item)
-                all_items.append(item)
-                sort_counter += 1
-                
-            for idx, text in enumerate(forecast_paragraphs):
-                item = ReportItem(
-                    id=str(uuid.uuid4()), report_id=report.id, category="forecast",
-                    sort_order=sort_counter, raw_text=forecast_raw_texts[idx],
-                    translated_text=text, summary_text=text
+
+                ref_number = f"KPIP/{datetime.now().year}/{date_str.replace('.', '/')}"
+                report = Report(
+                    id=str(uuid.uuid4()),
+                    report_date=date_str,
+                    ref_number=ref_number,
+                    event_count=len(event_paragraphs),
+                    forecast_count=len(forecast_paragraphs),
+                    social_media_count=len(social_media_items),
+                    not_needed_count=len(not_needed_paragraphs),
+                    job_id=job_id
                 )
-                db.add(item)
-                all_items.append(item)
-                sort_counter += 1
-                
-            for idx, text in enumerate(social_media_items):
-                item = ReportItem(
-                    id=str(uuid.uuid4()), report_id=report.id, category="social_media",
-                    sort_order=sort_counter, raw_text=social_media_raw_texts[idx],
-                    translated_text=text, summary_text=text
+                db.add(report)
+                await db.flush()
+
+                # Write Report Items
+                sort_counter = 0
+                for idx, text in enumerate(event_paragraphs):
+                    item = ReportItem(
+                        id=str(uuid.uuid4()), report_id=report.id, category="event",
+                        sort_order=sort_counter, raw_text=event_raw_texts[idx],
+                        translated_text=text, summary_text=text
+                    )
+                    db.add(item)
+                    all_items.append(item)
+                    sort_counter += 1
+
+                for idx, text in enumerate(forecast_paragraphs):
+                    item = ReportItem(
+                        id=str(uuid.uuid4()), report_id=report.id, category="forecast",
+                        sort_order=sort_counter, raw_text=forecast_raw_texts[idx],
+                        translated_text=text, summary_text=text
+                    )
+                    db.add(item)
+                    all_items.append(item)
+                    sort_counter += 1
+
+                for idx, text in enumerate(social_media_items):
+                    item = ReportItem(
+                        id=str(uuid.uuid4()), report_id=report.id, category="social_media",
+                        sort_order=sort_counter, raw_text=social_media_raw_texts[idx],
+                        translated_text=text, summary_text=text
+                    )
+                    db.add(item)
+                    all_items.append(item)
+                    sort_counter += 1
+
+                for idx, text in enumerate(not_needed_paragraphs):
+                    item = ReportItem(
+                        id=str(uuid.uuid4()), report_id=report.id, category="not_needed",
+                        sort_order=sort_counter, raw_text=not_needed_raw_texts[idx],
+                        translated_text=text, summary_text=text
+                    )
+                    db.add(item)
+                    all_items.append(item)
+                    sort_counter += 1
+
+                await db.commit()
+            except Exception as pg_err:
+                print(f"[Warning] PostgreSQL report write failed (skipping): {pg_err}")
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+                await self.update_job(
+                    db, job_id,
+                    status="profile_sync",
+                    progress=65,
+                    current_step="Database write skipped — continuing with Neo4j sync and DOCX generation",
+                    warning=f"PostgreSQL write failed: {str(pg_err)}"
                 )
-                db.add(item)
-                all_items.append(item)
-                sort_counter += 1
-                
-            for idx, text in enumerate(not_needed_paragraphs):
-                item = ReportItem(
-                    id=str(uuid.uuid4()), report_id=report.id, category="not_needed",
-                    sort_order=sort_counter, raw_text=not_needed_raw_texts[idx],
-                    translated_text=text, summary_text=text
-                )
-                db.add(item)
-                all_items.append(item)
-                sort_counter += 1
-                
-            await db.commit()
 
             # 4. Sync Profiles in filesystem + Neo4j Graph
+            # NOTE: _sync_profiles_from_texts is a synchronous/blocking function.
+            # We run it in a thread executor so it does not block the async event loop.
             await self.update_job(
                 db, job_id,
                 status="neo4j_sync",
                 progress=75,
-                current_step="Extracting suspect names, GNN disambiguation, and updating Neo4j Relationships Graph"
+                current_step="Extracting suspect names, GNN disambiguation, and updating Neo4j graph"
             )
-            
+
             all_raw_texts = event_raw_texts + forecast_raw_texts + social_media_raw_texts
-            # Run the CLI _sync_profiles_from_texts which updates PP_DIR files and Neo4j
-            _sync_profiles_from_texts(all_raw_texts, date_str, use_ollama)
-            
-            # 5. Sync Profiles from filesystem to SQL DB + Qdrant Index
-            await self.update_job(
-                db, job_id,
-                status="qdrant_indexing",
-                progress=85,
-                current_step="Synchronizing suspect profiles dossier tables and indexing semantic search collections"
-            )
-            
-            await self.profile_service.sync_all_profiles_to_db(db)
-            
-            # Index Report Items in Qdrant
-            for item in all_items:
-                summary_text = item.summary_text or item.translated_text or ""
-                self.qdrant.upsert_item(
-                    collection="report_items",
-                    point_id=item.id,
-                    text=summary_text,
-                    payload={
-                        "report_id": report.id,
-                        "report_item_id": item.id,
-                        "report_date": date_str,
-                        "category": item.category
-                    }
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: _sync_profiles_from_texts(all_raw_texts, date_str, use_ollama)
+                )
+            except Exception as neo4j_err:
+                print(f"[Warning] Neo4j / profile sync failed (skipping): {neo4j_err}")
+                await self.update_job(
+                    db, job_id,
+                    status="neo4j_sync",
+                    progress=75,
+                    current_step="Neo4j sync skipped — continuing with DOCX generation",
+                    warning=f"Neo4j sync error: {str(neo4j_err)}"
+                )
+
+            # 5. Sync Profiles from filesystem to SQL DB + Qdrant Index (optional)
+            try:
+                await self.update_job(
+                    db, job_id,
+                    status="qdrant_indexing",
+                    progress=85,
+                    current_step="Synchronizing suspect profiles to database and Qdrant index"
+                )
+                await self.profile_service.sync_all_profiles_to_db(db)
+
+                # Index Report Items in Qdrant
+                if report and all_items:
+                    for item in all_items:
+                        summary_text = item.summary_text or item.translated_text or ""
+                        self.qdrant.upsert_item(
+                            collection="report_items",
+                            point_id=item.id,
+                            text=summary_text,
+                            payload={
+                                "report_id": report.id,
+                                "report_item_id": item.id,
+                                "report_date": date_str,
+                                "category": item.category
+                            }
+                        )
+            except Exception as qdrant_err:
+                print(f"[Warning] Profile DB sync / Qdrant indexing failed (skipping): {qdrant_err}")
+                await self.update_job(
+                    db, job_id,
+                    status="qdrant_indexing",
+                    progress=85,
+                    current_step="Profile/Qdrant sync skipped — continuing with DOCX generation",
+                    warning=f"Qdrant/profile sync error: {str(qdrant_err)}"
                 )
 
             # 6. Build Consolidated DOCX Files on Disk
@@ -603,7 +644,7 @@ class ConsolidationService:
                 
             # 7. Complete the job
             result_summary = {
-                "report_id": report.id,
+                "report_id": report.id if report else None,
                 "event_count": len(event_paragraphs),
                 "forecast_count": len(forecast_paragraphs),
                 "social_media_count": len(social_media_items),

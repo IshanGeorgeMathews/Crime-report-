@@ -11,6 +11,8 @@ engine = create_async_engine(
     settings.DATABASE_URL,
     connect_args=connect_args,
     echo=False,
+    pool_pre_ping=True,       # detect dead connections immediately
+    pool_timeout=10,          # fail fast after 10s if no connection available
 )
 
 AsyncSessionLocal = async_sessionmaker(
