@@ -50,6 +50,39 @@ export const useQueue = (jobId?: string) => {
     },
   });
 
+  // Stop a job (pause it, keep intermediate state)
+  const stopMutation = useMutation<ApiResponse<void>, Error, string>({
+    mutationFn: async (id: string) => {
+      const response = await api.post<ApiResponse<void>>(`/jobs/${id}/stop`);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    },
+  });
+
+  // Resume/Run back a stopped/failed job
+  const resumeMutation = useMutation<ApiResponse<void>, Error, string>({
+    mutationFn: async (id: string) => {
+      const response = await api.post<ApiResponse<void>>(`/jobs/${id}/resume`);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    },
+  });
+
+  // Delete a job from the queue database
+  const deleteMutation = useMutation<ApiResponse<void>, Error, string>({
+    mutationFn: async (id: string) => {
+      const response = await api.delete<ApiResponse<void>>(`/jobs/${id}`);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    },
+  });
+
   // Sync active jobs count to uiStore for header status bar indicator
   const jobs = queueQuery.data?.data || [];
   const activeCount = jobs.filter((j) => j.status === 'running' || j.status === 'queued').length;
@@ -71,5 +104,18 @@ export const useQueue = (jobId?: string) => {
     cancelJob: cancelMutation.mutateAsync,
     isCancelling: cancelMutation.isPending,
     cancelError: cancelMutation.error,
+
+    stopJob: stopMutation.mutateAsync,
+    isStopping: stopMutation.isPending,
+    stopError: stopMutation.error,
+
+    resumeJob: resumeMutation.mutateAsync,
+    isResuming: resumeMutation.isPending,
+    resumeError: resumeMutation.error,
+
+    deleteJob: deleteMutation.mutateAsync,
+    isDeleting: deleteMutation.isPending,
+    deleteError: deleteMutation.error,
   };
 };
+

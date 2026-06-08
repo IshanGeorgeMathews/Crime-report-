@@ -20,6 +20,7 @@ import {
   Lock,
   CheckCircle,
   Play,
+  Pause,
   Upload,
   Trash2,
   Search,
@@ -534,7 +535,17 @@ export const ConsolidatePage: React.FC = () => {
 
 // --- Queue Page ---
 export const QueuePage: React.FC = () => {
-  const { queue, isFetchingQueue, queueError, refetchQueue, cancelJob, isCancelling } = useQueue();
+  const {
+    queue,
+    isFetchingQueue,
+    queueError,
+    refetchQueue,
+    cancelJob,
+    isCancelling,
+    stopJob,
+    resumeJob,
+    deleteJob
+  } = useQueue();
   const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
   const [cancelSuccess, setCancelSuccess] = useState<string | null>(null);
 
@@ -557,7 +568,7 @@ export const QueuePage: React.FC = () => {
   };
 
   const isActiveCancellable = (status: string) =>
-    ['running', 'queued', 'received', 'translating', 'summarizing'].includes(status);
+    ['running', 'queued', 'received', 'translating', 'summarizing', 'profile_sync', 'neo4j_sync', 'qdrant_indexing', 'docx_ready'].includes(status);
 
   if (queueError && queueError.message.includes('403')) {
     return (
@@ -690,7 +701,8 @@ export const QueuePage: React.FC = () => {
                             className={`h-full transition-all duration-300 ${
                               job.status === 'failed' ? 'bg-rose-500' :
                               job.status === 'completed' ? 'bg-emerald-500' :
-                              job.status === 'cancelled' ? 'bg-amber-400' : 'bg-cyan-500'
+                              job.status === 'cancelled' ? 'bg-amber-400' :
+                              job.status === 'stopped' ? 'bg-slate-400' : 'bg-cyan-500'
                             }`}
                             style={{ width: `${job.progress}%` }}
                           />
@@ -703,24 +715,57 @@ export const QueuePage: React.FC = () => {
                           job.status === 'completed' ? 'green' :
                           job.status === 'running' ? 'blue' :
                           job.status === 'failed' ? 'red' :
-                          job.status === 'cancelled' ? 'orange' : 'gray'
+                          job.status === 'cancelled' ? 'orange' :
+                          job.status === 'stopped' ? 'gray' : 'blue'
                         }
                       >
                         {job.status}
                       </Badge>
                     </td>
                     <td className="p-4">
-                      {isActiveCancellable(job.status) ? (
-                        <button
-                          onClick={() => handleCancelRequest(job.id)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors"
-                        >
-                          <X size={12} />
-                          Cancel
-                        </button>
-                      ) : (
-                        <span className="text-slate-300 text-xs italic">&mdash;</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {isActiveCancellable(job.status) && (
+                          <>
+                            <button
+                              onClick={() => stopJob(job.id)}
+                              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-amber-600 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors"
+                              title="Temporarily pause the consolidation run"
+                            >
+                              <Pause size={12} />
+                              Pause
+                            </button>
+                            <button
+                              onClick={() => handleCancelRequest(job.id)}
+                              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors"
+                              title="Cancel and undo all changes"
+                            >
+                              <X size={12} />
+                              Cancel
+                            </button>
+                          </>
+                        )}
+                        
+                        {(job.status === 'stopped' || job.status === 'failed') && (
+                          <button
+                            onClick={() => resumeJob(job.id)}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors"
+                            title="Resume/run the process from intermediate state"
+                          >
+                            <Play size={12} />
+                            Run
+                          </button>
+                        )}
+
+                        {['completed', 'failed', 'cancelled', 'stopped'].includes(job.status) && (
+                          <button
+                            onClick={() => deleteJob(job.id)}
+                            className="flex items-center justify-center p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-100 rounded-lg transition-colors"
+                            title="Remove job from queue history"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -732,6 +777,7 @@ export const QueuePage: React.FC = () => {
     </div>
   );
 };
+
 
 
 // --- Review Queue (VEG) Page ---

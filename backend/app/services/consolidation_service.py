@@ -32,8 +32,15 @@ from intel_tool import (
     _resolve_ollama_model,
 )
 
-# Module-level cancellation registry — job IDs that have been requested to cancel
+class CancelledError(Exception):
+    pass
+
+class StoppedError(Exception):
+    pass
+
+# Module-level cancellation & stop registries
 _CANCEL_REQUESTED: Set[str] = set()
+_STOP_REQUESTED: Set[str] = set()
 
 
 class ConsolidationService:
@@ -44,11 +51,45 @@ class ConsolidationService:
     def request_cancel(self, job_id: str):
         """Signal that a job should be cancelled on next checkpoint."""
         _CANCEL_REQUESTED.add(job_id)
+        _STOP_REQUESTED.discard(job_id)
+
+    def request_stop(self, job_id: str):
+        """Signal that a job should be stopped/paused on next checkpoint."""
+        _STOP_REQUESTED.add(job_id)
+        _CANCEL_REQUESTED.discard(job_id)
 
     def _check_cancel(self, job_id: str):
-        """Raise CancelledError if this job has been requested to cancel."""
+        """Raise appropriate exception if user requested cancellation or stopping."""
         if job_id in _CANCEL_REQUESTED:
             raise CancelledError(f"Job {job_id} was cancelled by user request.")
+        if job_id in _STOP_REQUESTED:
+            raise StoppedError(f"Job {job_id} was stopped by user request.")
+
+    async def stop_job(self, job_id: str):
+        """Mark job as stopped, saving progress and intermediate state (does not rollback)."""
+        from app.db.session import AsyncSessionLocal
+        _STOP_REQUESTED.discard(job_id)
+
+        db = AsyncSessionLocal()
+        try:
+            res = await db.execute(select(Job).filter(Job.id == job_id))
+            job = res.scalars().first()
+            if job and job.status not in ("completed", "failed", "cancelled", "stopped"):
+                job.status = "stopped"
+                job.current_step = "Stopped temporarily by user"
+                event = JobEvent(
+                    job_id=job_id,
+                    status="stopped",
+                    progress=job.progress,
+                    message="Stopped temporarily by user"
+                )
+                db.add(event)
+            await db.commit()
+        except Exception as e:
+            print(f"[Stop] Error stopping job {job_id}: {e}")
+            await db.rollback()
+        finally:
+            await db.close()
 
     async def cancel_job(self, job_id: str, source_files_dir: str = None):
         """
@@ -58,23 +99,28 @@ class ConsolidationService:
         from app.db.session import AsyncSessionLocal
         _CANCEL_REQUESTED.add(job_id)
 
+
         db = AsyncSessionLocal()
+        date_str = None
         try:
             # Mark job cancelled
             res = await db.execute(select(Job).filter(Job.id == job_id))
             job = res.scalars().first()
-            if job and job.status not in ("completed", "failed", "cancelled"):
-                job.status = "cancelled"
-                job.progress = job.progress  # keep current progress
-                job.current_step = "Cancelled by user — changes rolled back"
-                job.completed_at = datetime.utcnow()
-                event = JobEvent(
-                    job_id=job_id,
-                    status="cancelled",
-                    progress=job.progress,
-                    message="Cancelled by user — changes rolled back"
-                )
-                db.add(event)
+            if job:
+                if job.input_params:
+                    date_str = job.input_params.get("date")
+                if job.status not in ("completed", "failed", "cancelled"):
+                    job.status = "cancelled"
+                    job.progress = job.progress  # keep current progress
+                    job.current_step = "Cancelled by user — changes rolled back"
+                    job.completed_at = datetime.utcnow()
+                    event = JobEvent(
+                        job_id=job_id,
+                        status="cancelled",
+                        progress=job.progress,
+                        message="Cancelled by user — changes rolled back"
+                    )
+                    db.add(event)
 
             # Undo: delete Report rows (cascade deletes ReportItems)
             reports_res = await db.execute(select(Report).filter(Report.job_id == job_id))
@@ -90,6 +136,19 @@ class ConsolidationService:
             await db.rollback()
         finally:
             await db.close()
+
+        # Clean up Neo4j if connected and date_str is known
+        if date_str:
+            try:
+                from graph_db import GraphDatabase
+                neo4j_db = GraphDatabase()
+                if neo4j_db.is_connected():
+                    neo4j_db._run("MATCH (rec:Record {date: $date}) DETACH DELETE rec", date=date_str)
+                    neo4j_db._run("MATCH (cri:Crime {date: $date}) DETACH DELETE cri", date=date_str)
+                    print(f"[Cancel] Rolled back Neo4j nodes/edges for date {date_str}")
+            except Exception as e:
+                print(f"[Cancel] Error rolling back Neo4j for date {date_str}: {e}")
+
 
         # Remove temp upload directory if provided
         if source_files_dir and os.path.exists(source_files_dir):
@@ -114,11 +173,21 @@ class ConsolidationService:
         error_message: str = None
     ):
         """Update job details in DB and append to job events for SSE stream."""
+        # Check if cancelled or stopped in memory first
+        self._check_cancel(job_id)
+
         # Query job
         res = await db.execute(select(Job).filter(Job.id == job_id))
         job = res.scalars().first()
         if not job:
             return
+
+        # Check if cancelled or stopped in DB
+        if job.status in ("stopped", "cancelled") and status not in ("completed", "failed", "stopped", "cancelled"):
+            if job.status == "stopped":
+                raise StoppedError(f"Job {job_id} was stopped by user request.")
+            else:
+                raise CancelledError(f"Job {job_id} was cancelled by user request.")
             
         job.status = status
         job.progress = progress
@@ -150,15 +219,48 @@ class ConsolidationService:
 
     async def run_consolidation(self, job_id: str, date_str: str, source_files_dir: str):
         """Execute the full consolidation pipeline asynchronously."""
+        # Clear any stale stop/cancel requests for this job
+        _STOP_REQUESTED.discard(job_id)
+        _CANCEL_REQUESTED.discard(job_id)
+
         from app.db.session import AsyncSessionLocal
         db = AsyncSessionLocal()
         try:
+            # Fetch existing job to check for intermediate state
+            res = await db.execute(select(Job).filter(Job.id == job_id))
+            job = res.scalars().first()
+
+            # Initialize categories lists and other state from job.input_params if available
+            processed_files = []
+            event_paragraphs = []
+            event_raw_texts = []
+            forecast_paragraphs = []
+            forecast_raw_texts = []
+            social_media_items = []
+            social_media_raw_texts = []
+            not_needed_paragraphs = []
+            not_needed_raw_texts = []
+            failed_files = []
+
+            if job and job.input_params:
+                params = job.input_params
+                processed_files = params.get("processed_files", [])
+                event_paragraphs = params.get("event_paragraphs", [])
+                event_raw_texts = params.get("event_raw_texts", [])
+                forecast_paragraphs = params.get("forecast_paragraphs", [])
+                forecast_raw_texts = params.get("forecast_raw_texts", [])
+                social_media_items = params.get("social_media_items", [])
+                social_media_raw_texts = params.get("social_media_raw_texts", [])
+                not_needed_paragraphs = params.get("not_needed_paragraphs", [])
+                not_needed_raw_texts = params.get("not_needed_raw_texts", [])
+                failed_files = params.get("failed_files", [])
+
             # 1. Update status to Running
             await self.update_job(
                 db, job_id,
                 status="running",
                 progress=15,
-                current_step="Initializing consolidation job workspace"
+                current_step="Initializing consolidation job workspace" if not processed_files else "Resuming consolidation from intermediate state"
             )
 
             # Cancellation checkpoint #1 — before any real work starts
@@ -194,16 +296,7 @@ class ConsolidationService:
                 return
 
             total_files = len(all_files)
-            
-            # Setup categories lists
-            event_paragraphs = []
-            event_raw_texts = []
-            forecast_paragraphs = []
-            forecast_raw_texts = []
-            social_media_items = []
-            social_media_raw_texts = []
-            not_needed_paragraphs = []
-            not_needed_raw_texts = []
+
             
             failed_files = []
             batch_engines = []
@@ -211,6 +304,8 @@ class ConsolidationService:
             # 2. Process each file
             for idx, fpath in enumerate(all_files):
                 fname = os.path.basename(fpath)
+                if fname in processed_files:
+                    continue
 
                 # Cancellation checkpoint #2 — before each file
                 self._check_cancel(job_id)
@@ -227,6 +322,7 @@ class ConsolidationService:
                 )
                 
                 # Default category logic matching CLI fallback rules
+
                 lower_fname = fname.lower().replace(" ", "")
                 default_category = "event"
                 if any(kw in lower_fname for kw in SOCIAL_MEDIA_KEYWORDS):
@@ -336,8 +432,11 @@ class ConsolidationService:
                             event_paragraphs.append(summary)
                             event_raw_texts.append(item_en)
                             
+                    processed_files.append(fname)
+                    
                 except Exception as e:
                     failed_files.append({"section": "Consolidation Pipeline", "filename": fname})
+                    processed_files.append(fname)
                     await self.update_job(
                         db, job_id,
                         status="running",
@@ -345,6 +444,27 @@ class ConsolidationService:
                         current_step=f"Warning: Failed to process {fname}: {e}",
                         warning=f"File process error in {fname}: {str(e)}"
                     )
+
+                # Persist intermediate state to DB
+                res = await db.execute(select(Job).filter(Job.id == job_id))
+                j_ref = res.scalars().first()
+                if j_ref:
+                    current_params = dict(j_ref.input_params or {})
+                    current_params.update({
+                        "processed_files": processed_files,
+                        "event_paragraphs": event_paragraphs,
+                        "event_raw_texts": event_raw_texts,
+                        "forecast_paragraphs": forecast_paragraphs,
+                        "forecast_raw_texts": forecast_raw_texts,
+                        "social_media_items": social_media_items,
+                        "social_media_raw_texts": social_media_raw_texts,
+                        "not_needed_paragraphs": not_needed_paragraphs,
+                        "not_needed_raw_texts": not_needed_raw_texts,
+                        "failed_files": failed_files
+                    })
+                    j_ref.input_params = current_params
+                    await db.commit()
+
 
             # 3. Create Report in SQL DB
             await self.update_job(
@@ -506,6 +626,15 @@ class ConsolidationService:
             except Exception:
                 pass
             await self.cancel_job(job_id, source_files_dir=source_files_dir)
+
+        except StoppedError:
+            # User-initiated stop/pause — preserve state, update status
+            try:
+                await db.close()
+            except Exception:
+                pass
+            await self.stop_job(job_id)
+
 
         except Exception as e:
             import traceback

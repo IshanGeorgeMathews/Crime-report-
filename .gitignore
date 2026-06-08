@@ -35,3 +35,9 @@ env/
 # Local environment/config
 .env
 .env.*
+
+# Exclude specific database files and local scripts
+kpip.db
+backend/kpip.db
+api.py
+

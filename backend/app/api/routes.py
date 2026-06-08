@@ -31,6 +31,7 @@ from app.services.profile_service import ProfileService
 from app.services.graph_service import GraphService
 from app.services.qdrant_service import QdrantService
 from app.services.ner_service import NERService
+from utils import build_daily_report, build_less_priority_report
 
 router = APIRouter()
 consolidation_service = ConsolidationService()
@@ -286,10 +287,12 @@ async def upload_for_consolidation(
         status="received",
         progress=0,
         current_step="Files uploaded successfully",
-        created_by=current_user.full_name
+        created_by=current_user.id,
+        input_params={"date": date}
     )
     db.add(job)
     await db.commit()
+
     
     # Trigger background pipeline execution (without request-scoped db session)
     background_tasks.add_task(
@@ -304,11 +307,16 @@ async def upload_for_consolidation(
 @router.get("/jobs")
 async def list_jobs(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_analyst)):
     """List all recent jobs."""
-    result = await db.execute(select(Job).order_by(Job.created_at.desc()).limit(20))
-    jobs = result.scalars().all()
+    result = await db.execute(
+        select(Job, User.full_name)
+        .outerjoin(User, Job.created_by == User.id)
+        .order_by(Job.created_at.desc())
+        .limit(20)
+    )
+    jobs_data = result.all()
     
     res_list = []
-    for j in jobs:
+    for j, creator_name in jobs_data:
         res_list.append(JobResponse(
             id=j.id,
             job_type=j.job_type,
@@ -318,7 +326,7 @@ async def list_jobs(db: AsyncSession = Depends(get_db), current_user: User = Dep
             warning_count=j.warning_count,
             warnings=j.warnings,
             result=j.result,
-            created_by=j.created_by,
+            created_by=creator_name or j.created_by,
             created_at=j.created_at
         ))
     return {"success": True, "data": res_list}
@@ -326,11 +334,16 @@ async def list_jobs(db: AsyncSession = Depends(get_db), current_user: User = Dep
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_analyst)):
     """Fetch status details of a specific job."""
-    result = await db.execute(select(Job).filter(Job.id == job_id))
-    j = result.scalars().first()
-    if not j:
+    result = await db.execute(
+        select(Job, User.full_name)
+        .outerjoin(User, Job.created_by == User.id)
+        .filter(Job.id == job_id)
+    )
+    row = result.first()
+    if not row:
         raise HTTPException(status_code=404, detail="Job not found")
         
+    j, creator_name = row
     res = JobResponse(
         id=j.id,
         job_type=j.job_type,
@@ -340,7 +353,7 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db), current_user:
         warning_count=j.warning_count,
         warnings=j.warnings,
         result=j.result,
-        created_by=j.created_by,
+        created_by=creator_name or j.created_by,
         created_at=j.created_at
     )
     return {"success": True, "data": res}
@@ -362,6 +375,91 @@ async def cancel_job(job_id: str, db: AsyncSession = Depends(get_db), current_us
     await consolidation_service.cancel_job(job_id, source_files_dir=temp_dir)
 
     return {"success": True, "message": f"Job {job_id} cancelled and changes rolled back"}
+
+@router.post("/jobs/{job_id}/stop")
+async def stop_job(job_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_analyst)):
+    """Stop/pause an active job temporarily, preserving its intermediate state."""
+    result = await db.execute(select(Job).filter(Job.id == job_id))
+    j = result.scalars().first()
+    if not j:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if j.status not in ("running", "queued", "received", "translating", "summarizing", "profile_sync", "neo4j_sync", "qdrant_indexing", "docx_ready"):
+        raise HTTPException(status_code=400, detail=f"Job status is {j.status} and cannot be stopped")
+
+    consolidation_service.request_stop(job_id)
+    
+    # Update job status immediately in the database so the frontend can react instantly
+    j.status = "stopped"
+    j.current_step = "Stopped temporarily by user"
+    event = JobEvent(
+        job_id=job_id,
+        status="stopped",
+        progress=j.progress,
+        message="Stopped temporarily by user"
+    )
+    db.add(event)
+    await db.commit()
+
+    return {"success": True, "message": f"Job {job_id} stopped successfully"}
+
+@router.post("/jobs/{job_id}/resume")
+async def resume_job(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_analyst)
+):
+    """Resume a stopped or failed job from its intermediate state."""
+    result = await db.execute(select(Job).filter(Job.id == job_id))
+    j = result.scalars().first()
+    if not j:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if j.status not in ("stopped", "failed", "cancelled"):
+        raise HTTPException(status_code=400, detail=f"Job status is {j.status} and cannot be resumed")
+
+    # Reset status to queued
+    j.status = "queued"
+    j.current_step = "Resuming processing from intermediate state..."
+    event = JobEvent(
+        job_id=job_id,
+        status="queued",
+        progress=j.progress,
+        message="Resuming processing from intermediate state..."
+    )
+    db.add(event)
+    await db.commit()
+
+    # Get temp dir path from settings
+    temp_dir = os.path.join(settings.UPLOAD_DIR, "jobs", job_id)
+    
+    # Get date from input_params
+    date_str = j.input_params.get("date") if j.input_params else None
+    if not date_str:
+        date_str = datetime.now().strftime("%d.%m.%Y")
+
+    # Re-trigger background pipeline execution
+    background_tasks.add_task(
+        consolidation_service.run_consolidation,
+        job_id, date_str, temp_dir
+    )
+
+    return {"success": True, "message": f"Job {job_id} resumed"}
+
+@router.delete("/jobs/{job_id}")
+async def delete_job(job_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_analyst)):
+    """Delete a finished, stopped, or failed job from the queue/history database."""
+    result = await db.execute(select(Job).filter(Job.id == job_id))
+    j = result.scalars().first()
+    if not j:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if j.status not in ("completed", "failed", "cancelled", "stopped"):
+        raise HTTPException(status_code=400, detail="Cannot delete an active/running job")
+
+    # This will cascade delete job_events as defined in models.py
+    await db.delete(j)
+    await db.commit()
+    return {"success": True, "message": f"Job {job_id} deleted successfully"}
+
 
 @router.get("/jobs/{job_id}/events")
 async def get_job_events_stream(
