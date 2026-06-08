@@ -1,5 +1,5 @@
 import app.core.paths  # Configures Python path for importing existing modules
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import numpy as np
 
 from graph_db import GraphDatabase, GNNModelManager
@@ -57,19 +57,111 @@ class GraphService:
             })
         return recommendations
 
-    def query_subgraph(self, center_node_id: str, depth: int = 1) -> Dict[str, Any]:
-        """Query Neo4j for nodes and relationships connected to a center node up to a certain depth."""
+    def query_subgraph(
+        self,
+        center_node_id: Optional[str] = None,
+        depth: int = 1,
+        query_type: str = "node",
+        date: Optional[str] = None,
+        crime_keyword: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Query Neo4j graph with multiple strategies:
+        - query_type='all'    → return a sample of all nodes
+        - query_type='date'   → return all nodes linked to a specific date (date param required)
+        - query_type='crime'  → return crime nodes matching keyword + their neighbours
+        - query_type='node'   → center on a specific node_id (default behaviour)
+        """
         if not self.db.is_connected():
             return {"nodes": [], "edges": []}
-            
-        # If center node ID is not specified or graph is empty, query a general sample of nodes
-        if not center_node_id:
-            nodes_data = self.db._run("MATCH (n) RETURN n LIMIT 50")
-            edges_data = self.db._run("MATCH (a)-[r]-(b) WHERE id(a) < id(b) RETURN a, r, b LIMIT 100")
-            
+
+        # ── Mode: ALL nodes (sample) ────────────────────────────────────────────
+        if query_type == "all" or not center_node_id:
+            nodes_data = self.db._run("MATCH (n) RETURN n LIMIT 80")
+            edges_data = self.db._run(
+                "MATCH (a)-[r]-(b) WHERE id(a) < id(b) RETURN a, r, b LIMIT 150"
+            )
+            return self._build_graph(nodes_data, edges_data)
+
+        # ── Mode: DATE ─────────────────────────────────────────────────────────
+        if query_type == "date" and date:
+            # Find record nodes with matching date and their connected neighbours
+            nodes_data = self.db._run(
+                """
+                MATCH (rec {type: 'record', date: $date})-[r]-(neighbor)
+                RETURN neighbor AS n
+                UNION
+                MATCH (rec {type: 'record', date: $date})
+                RETURN rec AS n
+                LIMIT 100
+                """,
+                date=date,
+            )
+            edges_data = self.db._run(
+                """
+                MATCH (rec {type: 'record', date: $date})-[r]-(neighbor)
+                RETURN rec AS a, r, neighbor AS b
+                LIMIT 200
+                """,
+                date=date,
+            )
+            return self._build_graph(nodes_data, edges_data)
+
+        # ── Mode: CRIME keyword ────────────────────────────────────────────────
+        if query_type == "crime" and crime_keyword:
+            keyword = crime_keyword.lower()
+            nodes_data = self.db._run(
+                """
+                MATCH (c {type: 'crime'})
+                WHERE toLower(c.text) CONTAINS $kw OR toLower(c.category) CONTAINS $kw
+                MATCH (c)-[r]-(neighbor)
+                RETURN neighbor AS n
+                UNION
+                MATCH (c {type: 'crime'})
+                WHERE toLower(c.text) CONTAINS $kw OR toLower(c.category) CONTAINS $kw
+                RETURN c AS n
+                LIMIT 100
+                """,
+                kw=keyword,
+            )
+            edges_data = self.db._run(
+                """
+                MATCH (c {type: 'crime'})
+                WHERE toLower(c.text) CONTAINS $kw OR toLower(c.category) CONTAINS $kw
+                MATCH (c)-[r]-(neighbor)
+                RETURN c AS a, r, neighbor AS b
+                LIMIT 200
+                """,
+                kw=keyword,
+            )
+            return self._build_graph(nodes_data, edges_data)
+
+        # ── Mode: specific record node ─────────────────────────────────────────
+        if center_node_id.startswith("rec_"):
+            nodes_records = self.db._run(
+                """
+                MATCH (center {node_id: $center_id})-[r]-(neighbor)
+                RETURN neighbor AS n
+                UNION
+                MATCH (center {node_id: $center_id})
+                RETURN center AS n
+                """,
+                center_id=center_node_id,
+            )
+            rels_records = self.db._run(
+                """
+                MATCH (center {node_id: $center_id})-[r]-(neighbor)
+                WITH center, collect(neighbor) + center AS all_nodes
+                UNWIND all_nodes AS n1
+                UNWIND all_nodes AS n2
+                MATCH (n1)-[rel]->(n2)
+                RETURN n1.node_id AS source, n2.node_id AS target,
+                       type(rel) AS rel_type, properties(rel) AS props
+                """,
+                center_id=center_node_id,
+            )
             nodes = []
-            seen_nodes = set()
-            for record in nodes_data:
+            seen_nodes: set = set()
+            for record in nodes_records:
                 node = record.get("n")
                 if not node:
                     continue
@@ -78,64 +170,52 @@ class GraphService:
                 if nid and nid not in seen_nodes:
                     seen_nodes.add(nid)
                     nodes.append(self._format_node(node))
-            
             edges = []
-            for record in edges_data:
-                a_node = record.get("a")
-                b_node = record.get("b")
-                r_rel = record.get("r")
-                if not a_node or not b_node or not r_rel:
-                    continue
-                a_props = dict(a_node)
-                b_props = dict(b_node)
-                aid = a_props.get("node_id")
-                bid = b_props.get("node_id")
-                if aid and bid:
-                    edges.append({
-                        "id": f"e_{aid}_{bid}_{r_rel.type}",
-                        "source": aid,
-                        "target": bid,
-                        "type": r_rel.type,
-                        "weight": float(dict(r_rel).get("weight", 1.0))
-                    })
+            seen_edges: set = set()
+            for record in rels_records:
+                src = record.get("source")
+                tgt = record.get("target")
+                rel_type = record.get("rel_type")
+                props = record.get("props") or {}
+                if src and tgt and rel_type:
+                    edge_id = f"e_{src}_{tgt}_{rel_type}"
+                    if edge_id not in seen_edges:
+                        seen_edges.add(edge_id)
+                        edges.append({
+                            "id": edge_id,
+                            "source": src,
+                            "target": tgt,
+                            "type": rel_type,
+                            "weight": float(props.get("weight", 1.0)),
+                        })
             return {"nodes": nodes, "edges": edges}
 
-        # Query sub-graph centered on the node
-        # Safe Cypher pattern for depth-based matching
+        # ── Mode: NODE (person name / generic node_id) ─────────────────────────
         query = f"""
         MATCH path = (center {{node_id: $center_id}})-[*0..{depth}]-(neighbor)
         RETURN nodes(path) AS path_nodes, relationships(path) AS path_rels
         LIMIT 200
         """
         records = self.db._run(query, center_id=center_node_id)
-        
-        unique_nodes = {}
-        unique_edges = {}
-        
+
+        unique_nodes: Dict[str, Any] = {}
+        unique_edges: Dict[str, Any] = {}
+
         for rec in records:
             path_nodes = rec.get("path_nodes", [])
             path_rels = rec.get("path_rels", [])
-            
+
             for node in path_nodes:
                 node_props = dict(node)
                 nid = node_props.get("node_id")
                 if nid and nid not in unique_nodes:
                     unique_nodes[nid] = self._format_node(node)
-            
+
             for rel in path_rels:
-                # Relationship objects returned from neo4j driver contain nodes they connect
-                # which can be identified by their internal IDs (rel.nodes[0] and rel.nodes[1])
-                # or start/end. Let's lookup nodes by self.db._run to map back to node_id.
-                start_element = rel.start_node
-                end_element = rel.end_node
-                
-                # Fetch node_ids for the start and end nodes
-                start_props = dict(start_element)
-                end_props = dict(end_element)
-                
+                start_props = dict(rel.start_node)
+                end_props = dict(rel.end_node)
                 source_id = start_props.get("node_id")
                 target_id = end_props.get("node_id")
-                
                 if source_id and target_id:
                     rel_type = rel.type
                     rel_props = dict(rel)
@@ -146,13 +226,56 @@ class GraphService:
                             "source": source_id,
                             "target": target_id,
                             "type": rel_type,
-                            "weight": float(rel_props.get("weight", 1.0))
+                            "weight": float(rel_props.get("weight", 1.0)),
                         }
-                        
+
         return {
             "nodes": list(unique_nodes.values()),
-            "edges": list(unique_edges.values())
+            "edges": list(unique_edges.values()),
         }
+
+    def _build_graph(
+        self,
+        nodes_data: List[Any],
+        edges_data: List[Any],
+    ) -> Dict[str, Any]:
+        """Convert raw Neo4j records (with 'n' and 'a/r/b' keys) into node/edge dicts."""
+        nodes = []
+        seen_nodes: set = set()
+        for record in nodes_data:
+            node = record.get("n")
+            if not node:
+                continue
+            node_props = dict(node)
+            nid = node_props.get("node_id")
+            if nid and nid not in seen_nodes:
+                seen_nodes.add(nid)
+                nodes.append(self._format_node(node))
+
+        edges = []
+        seen_edges: set = set()
+        for record in edges_data:
+            a_node = record.get("a")
+            b_node = record.get("b")
+            r_rel = record.get("r")
+            if not a_node or not b_node or not r_rel:
+                continue
+            a_props = dict(a_node)
+            b_props = dict(b_node)
+            aid = a_props.get("node_id")
+            bid = b_props.get("node_id")
+            if aid and bid:
+                edge_id = f"e_{aid}_{bid}_{r_rel.type}"
+                if edge_id not in seen_edges:
+                    seen_edges.add(edge_id)
+                    edges.append({
+                        "id": edge_id,
+                        "source": aid,
+                        "target": bid,
+                        "type": r_rel.type,
+                        "weight": float(dict(r_rel).get("weight", 1.0)),
+                    })
+        return {"nodes": nodes, "edges": edges}
 
     def _format_node(self, node: Any) -> Dict[str, Any]:
         """Convert a Neo4j node object into frontend representation."""

@@ -23,9 +23,37 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response Interceptor: Handle Token Expiry
+const snakeToCamel = (str: string): string => {
+  return str.replace(/([-_][a-z])/g, (group) =>
+    group.toUpperCase().replace('-', '').replace('_', '')
+  );
+};
+
+const convertKeys = (obj: any, skipKeys: string[] = ['properties', 'inputParams', 'result']): any => {
+  if (Array.isArray(obj)) {
+    return obj.map(v => convertKeys(v, skipKeys));
+  } else if (obj !== null && obj !== undefined && obj.constructor === Object) {
+    return Object.keys(obj).reduce((result, key) => {
+      const camelKey = snakeToCamel(key);
+      if (skipKeys.includes(key)) {
+        result[camelKey] = obj[key];
+      } else {
+        result[camelKey] = convertKeys(obj[key], skipKeys);
+      }
+      return result;
+    }, {} as any);
+  }
+  return obj;
+};
+
+// Response Interceptor: Handle Token Expiry and Key Case Conversion
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    if (response.data) {
+      response.data = convertKeys(response.data);
+    }
+    return response;
+  },
   (error) => {
     if (error.response?.status === 401) {
       // Auto logout on 401 unauthorized
@@ -34,6 +62,7 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
 
 // MOCK ADAPTER FOR LOCAL UI-ONLY VALIDATION
 const VITE_USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false';

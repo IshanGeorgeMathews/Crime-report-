@@ -3,15 +3,32 @@ import { api } from '../lib/api';
 import type { ApiResponse } from '../types/api';
 import type { GraphData, GnnRecommendation } from '../types/graph';
 
-export const useGraph = (personName?: string) => {
+export type GraphQueryType = 'all' | 'node' | 'date' | 'crime';
+
+export interface GraphQueryParams {
+  queryType: GraphQueryType;
+  centerNodeId?: string;
+  date?: string;       // DD.MM.YYYY
+  crimeKeyword?: string;
+  depth?: number;
+}
+
+export const useGraph = () => {
   const queryClient = useQueryClient();
 
-  // Query node-edge network data
-  const networkQuery = useQuery<ApiResponse<GraphData>, Error>({
-    queryKey: ['graph', 'network', personName],
-    queryFn: async () => {
+  // On-demand graph query mutation
+  const graphMutation = useMutation<ApiResponse<GraphData>, Error, GraphQueryParams>({
+    mutationFn: async (params) => {
+      const searchParams: Record<string, string> = {
+        queryType: params.queryType,
+        depth: String(params.depth ?? 1),
+      };
+      if (params.centerNodeId) searchParams.centerNodeId = params.centerNodeId;
+      if (params.date) searchParams.date = params.date;
+      if (params.crimeKeyword) searchParams.crimeKeyword = params.crimeKeyword;
+
       const response = await api.get<ApiResponse<GraphData>>('/graph/query', {
-        params: personName ? { person: personName } : {},
+        params: searchParams,
       });
       return response.data;
     },
@@ -28,13 +45,19 @@ export const useGraph = (personName?: string) => {
 
   // Query GNN hidden associate suggestions
   const associatesQuery = useQuery<ApiResponse<GnnRecommendation[]>, Error>({
-    queryKey: ['graph', 'associates', personName],
+    queryKey: ['graph', 'associates', ''],
     queryFn: async () => {
-      const response = await api.get<ApiResponse<GnnRecommendation[]>>(`/graph/associates/${personName}`);
-      return response.data;
+      return { success: true, data: [] };
     },
-    enabled: !!personName,
+    enabled: false,
   });
+
+  const fetchAssociates = async (personName: string) => {
+    const response = await api.get<ApiResponse<GnnRecommendation[]>>(
+      `/graph/associates/${encodeURIComponent(personName)}`
+    );
+    return response.data.data || [];
+  };
 
   // Clean graph nodes database mutation
   const cleanGraphMutation = useMutation<ApiResponse<{ removedCount: number }>, Error, void>({
@@ -48,15 +71,17 @@ export const useGraph = (personName?: string) => {
   });
 
   return {
-    graphData: networkQuery.data?.data || { nodes: [], edges: [] },
-    isFetchingGraph: networkQuery.isFetching,
-    graphError: networkQuery.error,
+    graphData: graphMutation.data?.data || { nodes: [], edges: [] },
+    isFetchingGraph: graphMutation.isPending,
+    graphError: graphMutation.error,
+    queryGraph: graphMutation.mutateAsync,
 
     stats: statsQuery.data?.data,
     isFetchingStats: statsQuery.isFetching,
 
-    associates: associatesQuery.data?.data || [],
-    isFetchingAssociates: associatesQuery.isFetching,
+    fetchAssociates,
+    associates: [] as GnnRecommendation[],
+    isFetchingAssociates: false,
 
     cleanGraph: cleanGraphMutation.mutateAsync,
     isCleaning: cleanGraphMutation.isPending,

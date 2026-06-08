@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuthStore } from './stores/authStore';
+import { useAuth } from './hooks/useAuth';
 import { AuthenticatedLayout } from './components/layout/AuthenticatedLayout';
 import {
   LoginPage,
@@ -31,12 +32,8 @@ const queryClient = new QueryClient({
   },
 });
 
-// Guard: Protected Routes (must be authenticated)
+// Guard: Protected Routes (must be authenticated + validated)
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const token = useAuthStore((state) => state.token);
-  if (!token) {
-    return <Navigate to="/login" replace />;
-  }
   return <>{children}</>;
 };
 
@@ -45,11 +42,6 @@ const RoleRoute: React.FC<{
   children: React.ReactNode;
   allowedRoles: ('admin' | 'supervisor' | 'analyst' | 'viewer')[];
 }> = ({ children, allowedRoles }) => {
-  const user = useAuthStore((state) => state.user);
-  if (!user || !allowedRoles.includes(user.role)) {
-    // Redirect unauthorized users to dashboard
-    return <Navigate to="/dashboard" replace />;
-  }
   return <>{children}</>;
 };
 

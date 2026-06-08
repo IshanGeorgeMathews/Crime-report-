@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useUiStore } from '../stores/uiStore';
 import type { ApiResponse } from '../types/api';
@@ -6,6 +6,7 @@ import type { Job } from '../types/job';
 import { useEffect } from 'react';
 
 export const useQueue = (jobId?: string) => {
+  const queryClient = useQueryClient();
   const setActiveJobsCount = useUiStore((state) => state.setActiveJobsCount);
 
   // Query single job details
@@ -36,6 +37,19 @@ export const useQueue = (jobId?: string) => {
     },
   });
 
+  // Cancel a job and undo changes
+  const cancelMutation = useMutation<ApiResponse<void>, Error, string>({
+    mutationFn: async (id: string) => {
+      const response = await api.post<ApiResponse<void>>(`/jobs/${id}/cancel`);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+      queryClient.invalidateQueries({ queryKey: ['reports'] });
+      queryClient.invalidateQueries({ queryKey: ['profiles'] });
+    },
+  });
+
   // Sync active jobs count to uiStore for header status bar indicator
   const jobs = queueQuery.data?.data || [];
   const activeCount = jobs.filter((j) => j.status === 'running' || j.status === 'queued').length;
@@ -53,5 +67,9 @@ export const useQueue = (jobId?: string) => {
     isFetchingQueue: queueQuery.isFetching,
     queueError: queueQuery.error,
     refetchQueue: queueQuery.refetch,
+
+    cancelJob: cancelMutation.mutateAsync,
+    isCancelling: cancelMutation.isPending,
+    cancelError: cancelMutation.error,
   };
 };

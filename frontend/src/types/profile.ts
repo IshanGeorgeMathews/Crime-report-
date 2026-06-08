@@ -73,4 +73,5 @@ export interface ReportItem {
   sourceFilename: string;
   districtTag: string;
   translationEngine?: string;
+  translatedText?: string;
 }

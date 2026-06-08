@@ -1,5 +1,6 @@
 import app.core.paths  # Configures Python path for importing existing modules
 import os
+import re
 import uuid
 import shutil
 from datetime import datetime, timedelta
@@ -19,6 +20,7 @@ from app.core import security
 from app.dependencies import get_current_user, require_analyst, require_supervisor, require_admin, require_viewer
 from app.schemas import (
     UserLogin, UserResponse, TokenResponse, ChangePassword,
+    UserCreate, UserUpdate, UserListItem,
     JobResponse, ReportResponse, ReportDetailResponse, ReportItemResponse,
     ProfileResponse, ProfileDetailResponse, SearchRequest, SearchResultResponse,
     GraphQueryResponse, GraphNodeResponse, GraphEdgeResponse, GnnRecommendationResponse,
@@ -91,6 +93,144 @@ async def logout(current_user: User = Depends(get_current_user)):
     """Logout endpoint (no-op in stateless JWT, audited)."""
     return {"success": True, "message": "Successfully logged out"}
 
+@router.post("/auth/change-password")
+async def change_password(
+    payload: ChangePassword,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Change own password (any authenticated user)."""
+    if not security.verify_password(payload.old_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+    current_user.password_hash = security.get_password_hash(payload.new_password)
+    await db.commit()
+    return {"success": True, "message": "Password changed successfully"}
+
+# --- Admin User Management Endpoints ---
+
+@router.get("/admin/users")
+async def list_users(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_admin)):
+    """List all users (admin only)."""
+    result = await db.execute(select(User).order_by(User.created_at.desc()))
+    users = result.scalars().all()
+    res_list = []
+    for u in users:
+        res_list.append(UserListItem(
+            id=u.id,
+            username=u.username,
+            full_name=u.full_name,
+            role=u.role,
+            district=u.district,
+            is_active=u.is_active,
+            last_login_at=u.last_login_at,
+            created_at=u.created_at
+        ))
+    return {"success": True, "data": res_list}
+
+@router.post("/admin/users")
+async def create_user(
+    payload: UserCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    """Create a new user (admin only)."""
+    # Check for duplicate username
+    existing = await db.execute(select(User).filter(User.username == payload.username))
+    if existing.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Username '{payload.username}' already exists"
+        )
+    # Validate role
+    valid_roles = ["admin", "supervisor", "analyst", "viewer"]
+    role = payload.role.lower()
+    if role not in valid_roles:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid role: {payload.role}. Must be one of: {valid_roles}"
+        )
+    new_user = User(
+        username=payload.username,
+        password_hash=security.get_password_hash(payload.password),
+        full_name=payload.fullName,
+        role=role,
+        district=payload.district,
+        is_active=True
+    )
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+    res = UserListItem(
+        id=new_user.id,
+        username=new_user.username,
+        full_name=new_user.full_name,
+        role=new_user.role,
+        district=new_user.district,
+        is_active=new_user.is_active,
+        last_login_at=new_user.last_login_at,
+        created_at=new_user.created_at
+    )
+    return {"success": True, "data": res}
+
+@router.put("/admin/users/{user_id}")
+async def update_user(
+    user_id: str,
+    payload: UserUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    """Update user role/district/active status (admin only)."""
+    result = await db.execute(select(User).filter(User.id == user_id))
+    user = result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if payload.fullName is not None:
+        user.full_name = payload.fullName
+    if payload.role is not None:
+        valid_roles = ["admin", "supervisor", "analyst", "viewer"]
+        if payload.role.lower() not in valid_roles:
+            raise HTTPException(status_code=400, detail=f"Invalid role: {payload.role}")
+        user.role = payload.role.lower()
+    if payload.district is not None:
+        user.district = payload.district
+    if payload.isActive is not None:
+        user.is_active = payload.isActive
+
+    await db.commit()
+    await db.refresh(user)
+    res = UserListItem(
+        id=user.id,
+        username=user.username,
+        full_name=user.full_name,
+        role=user.role,
+        district=user.district,
+        is_active=user.is_active,
+        last_login_at=user.last_login_at,
+        created_at=user.created_at
+    )
+    return {"success": True, "data": res}
+
+@router.delete("/admin/users/{user_id}")
+async def deactivate_user(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    """Deactivate a user (admin only). Does not delete — sets is_active=False."""
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot deactivate your own account")
+    result = await db.execute(select(User).filter(User.id == user_id))
+    user = result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.is_active = False
+    await db.commit()
+    return {"success": True, "message": f"User {user.username} deactivated"}
+
 # --- Consolidation Endpoints ---
 
 @router.post("/consolidate/upload")
@@ -128,7 +268,6 @@ async def upload_for_consolidation(
     os.makedirs(temp_dir, exist_ok=True)
     
     # Write files to disk
-    import re
     for f in files:
         # Sanitize filename: alphanumeric, space, dot, underscore, dash only
         base_name = os.path.basename(f.filename)
@@ -205,6 +344,24 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db), current_user:
         created_at=j.created_at
     )
     return {"success": True, "data": res}
+
+@router.post("/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_analyst)):
+    """Cancel an active job and undo any partial database changes."""
+    result = await db.execute(select(Job).filter(Job.id == job_id))
+    j = result.scalars().first()
+    if not j:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if j.status in ("completed", "failed", "cancelled"):
+        raise HTTPException(status_code=400, detail=f"Job is already {j.status} and cannot be cancelled")
+
+    # Derive temp dir path from settings (matches upload route logic)
+    temp_dir = os.path.join(settings.UPLOAD_DIR, "jobs", job_id)
+
+    # Request cancellation — background task will detect and roll back
+    await consolidation_service.cancel_job(job_id, source_files_dir=temp_dir)
+
+    return {"success": True, "message": f"Job {job_id} cancelled and changes rolled back"}
 
 @router.get("/jobs/{job_id}/events")
 async def get_job_events_stream(
@@ -471,9 +628,22 @@ async def get_graph_stats(current_user: User = Depends(require_viewer)):
     return {"success": True, "data": stats}
 
 @router.get("/graph/query")
-async def query_subgraph(centerNodeId: Optional[str] = None, depth: int = 1, current_user: User = Depends(require_viewer)):
-    """Query sub-graph connection path centered around a node."""
-    res = graph_service.query_subgraph(centerNodeId, depth)
+async def query_subgraph(
+    centerNodeId: Optional[str] = None,
+    depth: int = 1,
+    queryType: str = "node",
+    date: Optional[str] = None,
+    crimeKeyword: Optional[str] = None,
+    current_user: User = Depends(require_viewer)
+):
+    """Query sub-graph. queryType: 'all' | 'node' | 'date' | 'crime'."""
+    res = graph_service.query_subgraph(
+        center_node_id=centerNodeId,
+        depth=depth,
+        query_type=queryType,
+        date=date,
+        crime_keyword=crimeKeyword,
+    )
     return {"success": True, "data": res}
 
 @router.get("/graph/associates/{person_name}")

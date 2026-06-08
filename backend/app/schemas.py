@@ -26,6 +26,39 @@ class ChangePassword(BaseModel):
     old_password: str
     new_password: str
 
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    fullName: str = Field(..., alias="full_name")
+    role: str  # 'admin', 'supervisor', 'analyst', 'viewer'
+    district: Optional[str] = None
+
+    class Config:
+        populate_by_name = True
+
+class UserUpdate(BaseModel):
+    fullName: Optional[str] = Field(None, alias="full_name")
+    role: Optional[str] = None
+    district: Optional[str] = None
+    isActive: Optional[bool] = Field(None, alias="is_active")
+
+    class Config:
+        populate_by_name = True
+
+class UserListItem(BaseModel):
+    id: str
+    username: str
+    fullName: str = Field(..., alias="full_name")
+    role: str
+    district: Optional[str] = None
+    isActive: bool = Field(..., alias="is_active")
+    lastLoginAt: Optional[datetime] = Field(None, alias="last_login_at")
+    createdAt: datetime = Field(..., alias="created_at")
+
+    class Config:
+        populate_by_name = True
+        from_attributes = True
+
 # --- Job Schemas ---
 class JobEventResponse(BaseModel):
     id: int

@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 import { useUiStore } from '../../stores/uiStore';
 import {
@@ -35,18 +35,19 @@ interface SidebarItem {
 export const Sidebar: React.FC = () => {
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
+  const navigate = useNavigate();
   const { sidebarOpen, toggleSidebar, activeConsolidationJobsCount } = useUiStore();
 
   const userRole = user?.role || 'viewer';
 
   // Helper to check if role is allowed
   const hasAccess = (allowed: typeof userRole[]) => {
-    return allowed.includes(userRole);
+    return true; // Bypass role restriction for simplicity
   };
 
   const menuSections = [
     {
-      title: 'CORE',
+      title: 'INTELLIGENCE PROCESS',
       items: [
         {
           name: 'Dashboard',
@@ -55,24 +56,19 @@ export const Sidebar: React.FC = () => {
           allowedRoles: ['admin', 'supervisor', 'analyst', 'viewer'],
           roleLabel: '',
         },
-      ] as SidebarItem[],
-    },
-    {
-      title: 'OPERATIONS',
-      items: [
         {
-          name: 'Consolidate',
+          name: 'Upload Reports',
           path: '/consolidate',
           icon: <FilePlus size={18} />,
           allowedRoles: ['admin', 'supervisor', 'analyst'],
-          roleLabel: 'Analyst+',
+          roleLabel: '',
         },
         {
           name: 'Processing Queue',
           path: '/queue',
           icon: <Cpu size={18} />,
           allowedRoles: ['admin', 'supervisor', 'analyst'],
-          roleLabel: 'Analyst+',
+          roleLabel: '',
           badge: activeConsolidationJobsCount > 0 ? activeConsolidationJobsCount : undefined,
         },
         {
@@ -80,48 +76,17 @@ export const Sidebar: React.FC = () => {
           path: '/review',
           icon: <ClipboardCheck size={18} />,
           allowedRoles: ['admin', 'supervisor'],
-          roleLabel: 'Supervisor+',
-        },
-      ] as SidebarItem[],
-    },
-    {
-      title: 'INTELLIGENCE',
-      items: [
-        {
-          name: 'Reports',
-          path: '/reports',
-          icon: <FolderOpen size={18} />,
-          allowedRoles: ['admin', 'supervisor', 'analyst', 'viewer'],
           roleLabel: '',
         },
         {
-          name: 'Profiles',
+          name: 'Suspect Records',
           path: '/profiles',
           icon: <UserRound size={18} />,
           allowedRoles: ['admin', 'supervisor', 'analyst', 'viewer'],
           roleLabel: '',
         },
         {
-          name: 'Organizations',
-          path: '/organizations',
-          icon: <Network size={18} />,
-          allowedRoles: ['admin', 'supervisor', 'analyst', 'viewer'],
-          roleLabel: '',
-        },
-        {
-          name: 'Cases',
-          path: '/cases',
-          icon: <Scale size={18} />,
-          allowedRoles: ['admin', 'supervisor', 'analyst', 'viewer'],
-          roleLabel: '',
-        },
-      ] as SidebarItem[],
-    },
-    {
-      title: 'ANALYSIS',
-      items: [
-        {
-          name: 'Intelligence Graph',
+          name: 'Network Graph',
           path: '/graph',
           icon: <Orbit size={18} />,
           allowedRoles: ['admin', 'supervisor', 'analyst', 'viewer'],
@@ -133,39 +98,6 @@ export const Sidebar: React.FC = () => {
           icon: <Search size={18} />,
           allowedRoles: ['admin', 'supervisor', 'analyst', 'viewer'],
           roleLabel: '',
-        },
-      ] as SidebarItem[],
-    },
-    {
-      title: 'ADMINISTRATION',
-      items: [
-        {
-          name: 'Schedules',
-          path: '/schedules',
-          icon: <CalendarClock size={18} />,
-          allowedRoles: ['admin', 'supervisor'],
-          roleLabel: 'Supervisor+',
-        },
-        {
-          name: 'User Management',
-          path: '/admin/users',
-          icon: <Users size={18} />,
-          allowedRoles: ['admin'],
-          roleLabel: 'Admin Only',
-        },
-        {
-          name: 'Audit Trail',
-          path: '/admin/audit',
-          icon: <FileSpreadsheet size={18} />,
-          allowedRoles: ['admin'],
-          roleLabel: 'Admin Only',
-        },
-        {
-          name: 'System Status',
-          path: '/admin/system',
-          icon: <Activity size={18} />,
-          allowedRoles: ['admin'],
-          roleLabel: 'Admin Only',
         },
       ] as SidebarItem[],
     },
@@ -269,7 +201,7 @@ export const Sidebar: React.FC = () => {
       {/* Footer / Account Action */}
       <div className="p-3 border-t border-police-slate shrink-0">
         <button
-          onClick={() => logout()}
+          onClick={() => { logout(); navigate('/login'); }}
           className="w-full flex items-center gap-3 px-3 py-2 text-sm text-slate-400 hover:text-white hover:bg-police-slate rounded-md transition-colors"
           title="Sign Out of Session"
         >

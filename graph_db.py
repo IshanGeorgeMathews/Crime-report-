@@ -126,16 +126,24 @@ class GraphDatabase:
     # ------------------------------------------------------------------
     def _run(self, query: str, **params):
         """Execute a Cypher query and return a list of record dicts."""
-        with self._driver.session(database=self.database) as session:
-            result = session.run(query, **params)
-            return [record.data() for record in result]
+        try:
+            with self._driver.session(database=self.database) as session:
+                result = session.run(query, **params)
+                return [record.data() for record in result]
+        except Exception as e:
+            print(f"[Warning] Neo4j query execution failed: {e}")
+            return []
 
     def _run_single(self, query: str, **params):
         """Execute a Cypher query and return a single record dict or None."""
-        with self._driver.session(database=self.database) as session:
-            result = session.run(query, **params)
-            record = result.single()
-            return record.data() if record else None
+        try:
+            with self._driver.session(database=self.database) as session:
+                result = session.run(query, **params)
+                record = result.single()
+                return record.data() if record else None
+        except Exception as e:
+            print(f"[Warning] Neo4j single query execution failed: {e}")
+            return None
 
     def _log_audit(self, action: str, details: dict):
         """Write a log entry to graph_db_audit.json."""

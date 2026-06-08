@@ -4,10 +4,11 @@ import re
 import uuid
 import shutil
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Set
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import delete
 
 from app.config import settings
 from app.db.models import Job, JobEvent, Report, ReportItem
@@ -31,10 +32,75 @@ from intel_tool import (
     _resolve_ollama_model,
 )
 
+# Module-level cancellation registry — job IDs that have been requested to cancel
+_CANCEL_REQUESTED: Set[str] = set()
+
+
 class ConsolidationService:
     def __init__(self):
         self.profile_service = ProfileService()
         self.qdrant = QdrantService()
+
+    def request_cancel(self, job_id: str):
+        """Signal that a job should be cancelled on next checkpoint."""
+        _CANCEL_REQUESTED.add(job_id)
+
+    def _check_cancel(self, job_id: str):
+        """Raise CancelledError if this job has been requested to cancel."""
+        if job_id in _CANCEL_REQUESTED:
+            raise CancelledError(f"Job {job_id} was cancelled by user request.")
+
+    async def cancel_job(self, job_id: str, source_files_dir: str = None):
+        """
+        Mark a job as cancelled and undo any partial DB changes.
+        Deletes Report + ReportItem rows created by this job, removes temp files.
+        """
+        from app.db.session import AsyncSessionLocal
+        _CANCEL_REQUESTED.add(job_id)
+
+        db = AsyncSessionLocal()
+        try:
+            # Mark job cancelled
+            res = await db.execute(select(Job).filter(Job.id == job_id))
+            job = res.scalars().first()
+            if job and job.status not in ("completed", "failed", "cancelled"):
+                job.status = "cancelled"
+                job.progress = job.progress  # keep current progress
+                job.current_step = "Cancelled by user — changes rolled back"
+                job.completed_at = datetime.utcnow()
+                event = JobEvent(
+                    job_id=job_id,
+                    status="cancelled",
+                    progress=job.progress,
+                    message="Cancelled by user — changes rolled back"
+                )
+                db.add(event)
+
+            # Undo: delete Report rows (cascade deletes ReportItems)
+            reports_res = await db.execute(select(Report).filter(Report.job_id == job_id))
+            reports = reports_res.scalars().all()
+            for report in reports:
+                # Delete items explicitly first (in case cascade is not set)
+                await db.execute(delete(ReportItem).where(ReportItem.report_id == report.id))
+                await db.delete(report)
+
+            await db.commit()
+        except Exception as e:
+            print(f"[Cancel] Error rolling back job {job_id}: {e}")
+            await db.rollback()
+        finally:
+            await db.close()
+
+        # Remove temp upload directory if provided
+        if source_files_dir and os.path.exists(source_files_dir):
+            try:
+                shutil.rmtree(source_files_dir)
+            except Exception as e:
+                print(f"[Cancel] Could not remove temp dir {source_files_dir}: {e}")
+
+        # Clear from registry after cancellation is complete
+        _CANCEL_REQUESTED.discard(job_id)
+
 
     async def update_job(
         self,
@@ -94,6 +160,9 @@ class ConsolidationService:
                 progress=15,
                 current_step="Initializing consolidation job workspace"
             )
+
+            # Cancellation checkpoint #1 — before any real work starts
+            self._check_cancel(job_id)
             
             # Use Ollama if reachable
             use_ollama = False
@@ -142,6 +211,9 @@ class ConsolidationService:
             # 2. Process each file
             for idx, fpath in enumerate(all_files):
                 fname = os.path.basename(fpath)
+
+                # Cancellation checkpoint #2 — before each file
+                self._check_cancel(job_id)
                 
                 # Check for Malayalam translation
                 step_desc = f"Processing file {idx + 1}/{total_files} ({fname})"
@@ -426,7 +498,15 @@ class ConsolidationService:
                 result=result_summary
             )
             await db.close()
-            
+
+        except CancelledError:
+            # User-initiated cancel — run cleanup/undo
+            try:
+                await db.close()
+            except Exception:
+                pass
+            await self.cancel_job(job_id, source_files_dir=source_files_dir)
+
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -440,3 +520,4 @@ class ConsolidationService:
                 )
             finally:
                 await db.close()
+
