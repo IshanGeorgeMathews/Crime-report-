@@ -43,7 +43,7 @@ class LLMService:
             if m.lower().startswith(preferred_base):
                 return m
                 
-        fallback_bases = ["gpt-oss", "gemma", "llama3", "qwen2.5", "mistral", "phi3"]
+        fallback_bases = ["qwen", "qwen2.5", "gemma", "llama3", "mistral", "phi3"]
         for base in fallback_bases:
             for m in models:
                 if m.lower().startswith(base):

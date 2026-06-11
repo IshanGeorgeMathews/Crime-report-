@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     QDRANT_PORT: int = 6333
     
     OLLAMA_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "gemma2:9b"
+    OLLAMA_MODEL: str = "qwen:8b"
     
     # Model Cache Paths for Air-Gapped Intranet Environments
     NER_MODEL_PATH: str = "dslim/bert-base-NER"

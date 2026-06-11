@@ -17,25 +17,98 @@ class ProfileService:
     def __init__(self):
         self.qdrant = QdrantService()
 
+    def _normalize_profile_name(self, value: str) -> str:
+        """Return a normalized key for matching profile names to docx filenames."""
+        safe_value = re.sub(r'[<>:"/\\|?*]', '_', value or "")
+        return safe_value.strip().lower()
+
+    def _extract_name_key_from_filename(self, filename: str) -> Optional[tuple]:
+        """Parse a profile docx filename into a normalized name key and review flag."""
+        lower = filename.lower()
+        if not lower.endswith(".docx"):
+            return None
+        if "uo " in lower or "uo_" in lower:
+            return None
+        if "template" in lower or "form details" in lower:
+            return None
+
+        stem = filename[:-5]
+        is_review = lower.endswith("_review.docx")
+        if is_review:
+            name_part = stem[:-7]
+        else:
+            match = re.match(r'^\d+\)\s*(.*)', stem)
+            name_part = match.group(1) if match else stem
+
+        name_key = self._normalize_profile_name(name_part)
+        if not name_key:
+            return None
+        return name_key, is_review
+
+    def _resolve_profile_docx_path(self, profile_name: str, prefer_review: bool = False) -> Optional[str]:
+        """Find the best matching dossier path for a profile name."""
+        target_key = self._normalize_profile_name(profile_name)
+        if not target_key or not os.path.isdir(settings.PP_DIR):
+            return None
+
+        preferred_match = None
+        fallback_match = None
+        for filename in os.listdir(settings.PP_DIR):
+            parsed = self._extract_name_key_from_filename(filename)
+            if not parsed:
+                continue
+
+            file_name_key, is_review = parsed
+            if file_name_key != target_key:
+                continue
+
+            full_path = os.path.join(settings.PP_DIR, filename)
+            if is_review == prefer_review and preferred_match is None:
+                preferred_match = full_path
+            elif fallback_match is None:
+                fallback_match = full_path
+
+        return preferred_match or fallback_match
+
     async def sync_all_profiles_to_db(self, db: AsyncSession):
         """Load all profiles from PP_DIR docx files and sync them to SQL."""
         fs_profiles = load_profile_database(settings.PP_DIR)
-        
+
+        selected_profiles = {}
         for fs_prof in fs_profiles:
+            name = fs_prof.name
+            if not name:
+                name_part = fs_prof.filename[:-5]
+                match = re.match(r"^\d+\)\s*(.*)", name_part)
+                if match:
+                    name_part = match.group(1)
+                name = name_part.replace("_review", "").strip().title()
+
+            profile_key = self._normalize_profile_name(name)
+            is_review = "_review" in fs_prof.filename.lower()
+            existing = selected_profiles.get(profile_key)
+
+            # If both review and production files exist for the same person, keep production.
+            if existing and not existing["is_review"]:
+                continue
+            if existing and existing["is_review"] and is_review:
+                continue
+
+            selected_profiles[profile_key] = {
+                "profile": fs_prof,
+                "resolved_name": name,
+                "is_review": is_review,
+            }
+
+        for selected in selected_profiles.values():
+            fs_prof = selected["profile"]
             # Reconcile status based on filename or registry
             review_status = "approved"
             if "_review" in fs_prof.filename.lower():
                 review_status = "pending"
                 
             # Parse simple fields from docx
-            name = fs_prof.name
-            if not name:
-                # Fallback: extract from filename e.g. "1) Sachin.docx"
-                name_part = fs_prof.filename[:-5]
-                m = re.match(r"^\d+\)\s*(.*)", name_part)
-                if m:
-                    name_part = m.group(1)
-                name = name_part.replace("_review", "").strip().title()
+            name = fs_prof.name or selected["resolved_name"]
 
             # Query if profile already exists in DB by filename or name
             result = await db.execute(select(Profile).filter(Profile.name == name))
@@ -283,14 +356,10 @@ class ProfileService:
         # Find docx file in PP_DIR
         # Dossier naming convention: "<num>)  <Name>.docx" or "<Name>_review.docx"
         safe_name = re.sub(r'[<>:"/\\|?*]', '_', profile.name)
-        target_file = None
-        
-        for f in os.listdir(settings.PP_DIR):
-            if f.endswith(".docx"):
-                lower = f.lower()
-                if safe_name.lower() in lower and ("uo" not in lower) and ("template" not in lower) and ("form details" not in lower):
-                    target_file = os.path.join(settings.PP_DIR, f)
-                    break
+        target_file = self._resolve_profile_docx_path(
+            profile.name,
+            prefer_review=profile.review_status == "pending",
+        )
                     
         if not target_file:
             # Create a new dossier if missing on disk
@@ -403,14 +472,11 @@ class ProfileService:
         profile = result.scalars().first()
         if not profile:
             return None
-            
-        safe_name = re.sub(r'[<>:"/\\|?*]', '_', profile.name)
-        for f in os.listdir(settings.PP_DIR):
-            if f.endswith(".docx"):
-                lower = f.lower()
-                if safe_name.lower() in lower and "uo" not in lower and "template" not in lower and "form details" not in lower:
-                    return os.path.join(settings.PP_DIR, f)
-        return None
+
+        return self._resolve_profile_docx_path(
+            profile.name,
+            prefer_review=profile.review_status == "pending",
+        )
 
     async def generate_uo_note(self, profile_id: str, db: AsyncSession) -> Optional[str]:
         """Generate a Malayalam narrative UO Note .docx on-demand and return its path."""

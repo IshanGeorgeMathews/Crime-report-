@@ -154,12 +154,12 @@ class NEREngine:
         self.save_registry()
 
     def _resolve_model(self) -> str:
-        """Find the best available model from Ollama, prioritizing cloud models."""
+        """Find the best available local Ollama model, prioritizing Qwen."""
         try:
             r = requests.get(f"{self.ollama_url}/api/tags", timeout=3)
             if r.status_code == 200:
                 tags = [t["name"] for t in r.json().get("models", [])]
-                for preferred in ["gpt-oss", "gemma2", "llama3", "qwen2.5"]:
+                for preferred in ["qwen", "qwen2.5", "gemma2", "llama3"]:
                     for t in tags:
                         if t.lower().startswith(preferred):
                             return t
@@ -346,7 +346,7 @@ class NEREngine:
         if not candidates:
             return []
             
-        # 3. Classify candidates using Ollama (using the cloud-backed model)
+        # 3. Classify candidates using the locally running Ollama model
         classifications = self.classify_candidates(text, candidates)
         
         # 4. Filter only those verified as PERSON by the model

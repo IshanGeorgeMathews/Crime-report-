@@ -65,7 +65,7 @@ PP_DIR = os.path.join(
     "PP & Uo Note Dummy",
 )
 PP_TEMPLATE = os.path.join(PP_DIR, "PP Form details.docx")
-DEFAULT_SUMMARY_MODEL = "gpt-oss:120b-cloud"
+DEFAULT_SUMMARY_MODEL = "qwen:8b"
 
 
 def _check_ollama() -> bool:
@@ -79,7 +79,7 @@ def _check_ollama() -> bool:
 
 
 def _resolve_ollama_model(preferred_model: str, ollama_url: str = "http://localhost:11434") -> str:
-    """Return an installed Ollama model name, preferring Gemma2 9B."""
+    """Return an installed Ollama model name, preferring the configured local model."""
     try:
         import requests
         r = requests.get(f"{ollama_url}/api/tags", timeout=3)
@@ -99,7 +99,7 @@ def _resolve_ollama_model(preferred_model: str, ollama_url: str = "http://localh
             return model
 
     # Fallback to other common models if preferred is not found
-    fallback_bases = ["gpt-oss", "gemma", "llama3", "qwen2.5", "mistral", "phi3", "llava"]
+    fallback_bases = ["qwen", "qwen2.5", "gemma", "llama3", "mistral", "phi3", "llava"]
     for base in fallback_bases:
         for model in models:
             if model.lower().startswith(base):

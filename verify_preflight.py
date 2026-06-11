@@ -378,7 +378,7 @@ if tcp_reachable("localhost", 11434):
                 except Exception:
                     pass
             else:
-                warn("Ollama reachable but no models loaded  ← ollama pull gemma2:9b")
+                warn("Ollama reachable but no models loaded  ← ollama pull qwen:8b")
                 WARNS += 1
     except Exception as e:
         warn(f"Ollama model list check failed: {e}")
