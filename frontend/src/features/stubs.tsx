@@ -1403,9 +1403,175 @@ export const ProfileDetailPage: React.FC = () => {
   );
 };
 
+type GraphLayoutNode = { id: string; type: string; label: string; properties?: any };
+type GraphPoint = { x: number; y: number };
+type GraphLabelLayout = { x: number; y: number; width: number; height: number; hidden?: boolean };
+
+const getStableIndex = (value: string) =>
+  value.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+
+const getNodeCircleRadius = (node: GraphLayoutNode) =>
+  node.type === 'record' ? 10 : node.type === 'individual' ? 15 : 12;
+
+const getNodeDisplayLabel = (node: GraphLayoutNode) =>
+  (node.label || node.id || '').toString().slice(0, 18);
+
+const getNodeCollisionRadius = (node: GraphLayoutNode) => {
+  const label = getNodeDisplayLabel(node);
+  return getNodeCircleRadius(node) + 34 + Math.min(label.length * 4, 56);
+};
+
+const LABEL_DIRECTIONS = [
+  { x: 0, y: 1 },
+  { x: 0.86, y: 0.5 },
+  { x: 1, y: 0 },
+  { x: 0.86, y: -0.5 },
+  { x: 0, y: -1 },
+  { x: -0.86, y: -0.5 },
+  { x: -1, y: 0 },
+  { x: -0.86, y: 0.5 },
+];
+
+const rectsOverlap = (a: GraphLabelLayout, b: GraphLabelLayout, padding = 8) =>
+  Math.abs(a.x - b.x) < (a.width + b.width) / 2 + padding &&
+  Math.abs(a.y - b.y) < (a.height + b.height) / 2 + padding;
+
+const distancePointToRect = (point: GraphPoint, rect: GraphLabelLayout) => {
+  const dx = Math.max(Math.abs(point.x - rect.x) - rect.width / 2, 0);
+  const dy = Math.max(Math.abs(point.y - rect.y) - rect.height / 2, 0);
+  return Math.sqrt(dx * dx + dy * dy);
+};
+
+const touchesAnyNode = (
+  rect: GraphLabelLayout,
+  nodes: GraphLayoutNode[],
+  positions: Map<string, GraphPoint>,
+  extraPadding = 10
+) =>
+  nodes.some((node) => {
+    const point = positions.get(node.id);
+    if (!point) return false;
+    return distancePointToRect(point, rect) < getNodeCollisionRadius(node) + extraPadding;
+  });
+
+const buildNodeLabelLayouts = (
+  nodes: GraphLayoutNode[],
+  positions: Map<string, GraphPoint>
+) => {
+  const occupied: GraphLabelLayout[] = [];
+  const layouts = new Map<string, GraphLabelLayout>();
+
+  nodes.forEach((node) => {
+    const point = positions.get(node.id);
+    if (!point) return;
+
+    const label = getNodeDisplayLabel(node);
+    const width = Math.max(58, Math.min(label.length * 6.8 + 18, 170));
+    const height = 18;
+    const baseDistance = getNodeCollisionRadius(node) + 12;
+    const seed = getStableIndex(node.id) % LABEL_DIRECTIONS.length;
+    let chosen: GraphLabelLayout | null = null;
+
+    for (let attempt = 0; attempt < LABEL_DIRECTIONS.length; attempt++) {
+      const direction = LABEL_DIRECTIONS[(seed + attempt) % LABEL_DIRECTIONS.length];
+      const distance = baseDistance + (attempt % 3) * 12;
+      const candidate = {
+        x: point.x + direction.x * distance,
+        y: point.y + direction.y * distance,
+        width,
+        height,
+      };
+
+      if (touchesAnyNode(candidate, nodes, positions, 6)) continue;
+      if (occupied.some((taken) => rectsOverlap(candidate, taken, 10))) continue;
+      chosen = candidate;
+      break;
+    }
+
+    if (!chosen) {
+      chosen = { x: point.x, y: point.y + baseDistance + 12, width, height };
+    }
+
+    layouts.set(node.id, chosen);
+    occupied.push(chosen);
+  });
+
+  return layouts;
+};
+
+const buildEdgeLabelLayouts = (
+  edges: { id?: string; source: string; target: string; type?: string }[],
+  nodes: GraphLayoutNode[],
+  positions: Map<string, GraphPoint>,
+  nodeLabelLayouts: Map<string, GraphLabelLayout>
+) => {
+  const occupied = Array.from(nodeLabelLayouts.values());
+  const layouts = new Map<string, GraphLabelLayout>();
+
+  edges.forEach((edge, idx) => {
+    const edgeKey = edge.id || `${edge.source}-${edge.target}-${idx}`;
+    const src = positions.get(edge.source);
+    const tgt = positions.get(edge.target);
+    const label = String(edge.type || '').replace(/_/g, ' ');
+    if (!src || !tgt || !label) {
+      layouts.set(edgeKey, { x: 0, y: 0, width: 0, height: 0, hidden: true });
+      return;
+    }
+
+    const dx = tgt.x - src.x;
+    const dy = tgt.y - src.y;
+    const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.1);
+    if (dist < 135) {
+      layouts.set(edgeKey, { x: 0, y: 0, width: 0, height: 0, hidden: true });
+      return;
+    }
+
+    const normalX = -dy / dist;
+    const normalY = dx / dist;
+    const width = Math.max(42, Math.min(label.length * 5.8 + 16, 150));
+    const height = 14;
+    const seed = getStableIndex(edgeKey);
+    const candidates = [
+      { t: 0.5, side: seed % 2 === 0 ? 1 : -1, scale: 1 },
+      { t: 0.42, side: seed % 2 === 0 ? -1 : 1, scale: 1.35 },
+      { t: 0.58, side: seed % 3 === 0 ? -1 : 1, scale: 1.7 },
+      { t: 0.34, side: 1, scale: 2.05 },
+      { t: 0.66, side: -1, scale: 2.4 },
+    ];
+
+    let chosen: GraphLabelLayout | null = null;
+    for (const candidate of candidates) {
+      const offset = (28 + (seed % 4) * 12) * candidate.scale;
+      const anchorX = src.x + dx * candidate.t;
+      const anchorY = src.y + dy * candidate.t;
+      const rect = {
+        x: anchorX + normalX * offset * candidate.side,
+        y: anchorY + normalY * offset * candidate.side,
+        width,
+        height,
+      };
+
+      if (touchesAnyNode(rect, nodes, positions, 4)) continue;
+      if (occupied.some((taken) => rectsOverlap(rect, taken, 8))) continue;
+      chosen = rect;
+      break;
+    }
+
+    if (!chosen) {
+      chosen = { x: 0, y: 0, width: 0, height: 0, hidden: true };
+    } else {
+      occupied.push(chosen);
+    }
+
+    layouts.set(edgeKey, chosen);
+  });
+
+  return layouts;
+};
+
 // --- Graph Force Layout Hook (mini physics engine) ---
 function useForceLayout(
-  nodes: { id: string; type: string; label: string; properties?: any }[],
+  nodes: GraphLayoutNode[],
   edges: { source: string; target: string }[],
   width: number,
   height: number
@@ -1418,37 +1584,41 @@ function useForceLayout(
     const pos = new Map<string, { x: number; y: number }>();
     nodes.forEach((n, i) => {
       const angle = (i / nodes.length) * 2 * Math.PI;
-      const r = Math.min(width, height) * 0.32;
+      const r = Math.min(width, height) * 0.42;
       pos.set(n.id, {
-        x: width / 2 + r * Math.cos(angle) + (Math.random() - 0.5) * 40,
-        y: height / 2 + r * Math.sin(angle) + (Math.random() - 0.5) * 40,
+        x: width / 2 + r * Math.cos(angle) + (Math.random() - 0.5) * 85,
+        y: height / 2 + r * Math.sin(angle) + (Math.random() - 0.5) * 85,
       });
     });
 
-    const k = Math.sqrt((width * height) / (nodes.length || 1));
-    const iterations = 120;
-    const padding = 40;
-    // Temperature scales with canvas diagonal so all nodes can separate
-    const initTemp = Math.sqrt(width * width + height * height) * 0.15;
+    const k = Math.sqrt((width * height) / (nodes.length || 1)) * 1.95;
+    const desiredEdgeLength = Math.max(190, Math.min(k * 3.9, 330));
+    const iterations = 320;
+    const padding = 112;
+    const initTemp = Math.sqrt(width * width + height * height) * 0.24;
 
     for (let iter = 0; iter < iterations; iter++) {
       const temp = initTemp * (1 - iter / iterations);
 
-      // Accumulate displacement separately — do NOT mutate pos mid-iteration
       const disp = new Map<string, { x: number; y: number }>();
       nodes.forEach(n => disp.set(n.id, { x: 0, y: 0 }));
 
-      // Repulsion: every pair pushes apart
       for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
-          const idI = nodes[i].id;
-          const idJ = nodes[j].id;
+          const nodeI = nodes[i];
+          const nodeJ = nodes[j];
+          const idI = nodeI.id;
+          const idJ = nodeJ.id;
           const pi = pos.get(idI)!;
           const pj = pos.get(idJ)!;
           const dx = pi.x - pj.x;
           const dy = pi.y - pj.y;
           const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.1);
-          const force = (k * k) / dist;
+          const minDistance = getNodeCollisionRadius(nodeI) + getNodeCollisionRadius(nodeJ);
+          const effectiveDist = Math.max(dist, minDistance * 0.58);
+          const baseRepulsion = (k * k) / effectiveDist;
+          const collisionBoost = dist < minDistance ? (minDistance - dist) * 2.6 : 0;
+          const force = baseRepulsion * 0.16 + collisionBoost;
           const fx = (dx / dist) * force;
           const fy = (dy / dist) * force;
           const dI = disp.get(idI)!;
@@ -1458,7 +1628,6 @@ function useForceLayout(
         }
       }
 
-      // Attraction: edges pull endpoints together
       edges.forEach(e => {
         const ps = pos.get(e.source);
         const pt = pos.get(e.target);
@@ -1466,7 +1635,7 @@ function useForceLayout(
         const dx = pt.x - ps.x;
         const dy = pt.y - ps.y;
         const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.1);
-        const force = (dist * dist) / k;
+        const force = (dist - desiredEdgeLength) * 0.09;
         const fx = (dx / dist) * force;
         const fy = (dy / dist) * force;
         const dSrc = disp.get(e.source);
@@ -1477,7 +1646,15 @@ function useForceLayout(
         }
       });
 
-      // Apply capped displacement
+      nodes.forEach(n => {
+        const d = disp.get(n.id)!;
+        const p = pos.get(n.id)!;
+        disp.set(n.id, {
+          x: d.x + (width / 2 - p.x) * 0.007,
+          y: d.y + (height / 2 - p.y) * 0.007,
+        });
+      });
+
       nodes.forEach(n => {
         const p = pos.get(n.id)!;
         const d = disp.get(n.id) || { x: 0, y: 0 };
@@ -1511,8 +1688,8 @@ export const GraphExplorerPage: React.FC = () => {
   const [associates, setAssociates] = useState<any[]>([]);
   const [isFetchingAssociates, setIsFetchingAssociates] = useState(false);
 
-  const SVG_W = 700;
-  const SVG_H = 500;
+  const SVG_W = 820;
+  const SVG_H = 660;
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: SVG_W, h: SVG_H });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ mx: 0, my: 0, vx: 0, vy: 0 });
@@ -1520,6 +1697,14 @@ export const GraphExplorerPage: React.FC = () => {
   const nodes = graphData?.nodes || [];
   const edges = graphData?.edges || [];
   const positions = useForceLayout(nodes, edges, SVG_W, SVG_H);
+  const nodeLabelLayouts = React.useMemo(
+    () => buildNodeLabelLayouts(nodes, positions),
+    [nodes, positions]
+  );
+  const edgeLabelLayouts = React.useMemo(
+    () => buildEdgeLabelLayouts(edges, nodes, positions, nodeLabelLayouts),
+    [edges, nodes, positions, nodeLabelLayouts]
+  );
 
   useEffect(() => {
     queryGraph({ queryType: 'all' }).catch(() => {});
@@ -1727,7 +1912,7 @@ export const GraphExplorerPage: React.FC = () => {
         </div>
 
         {/* Center: SVG Canvas */}
-        <div className="lg:col-span-2 bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden relative shadow-xl" style={{ minHeight: 500 }}>
+        <div className="lg:col-span-2 bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden relative shadow-xl" style={{ minHeight: 560 }}>
           <div className="absolute top-3 left-3 z-10 text-[9px] text-slate-500 font-semibold uppercase tracking-widest leading-relaxed pointer-events-none">
             <div>Scroll: zoom · Drag: pan</div>
             <div>Click: inspect · Dbl-click: drill down</div>
@@ -1751,7 +1936,7 @@ export const GraphExplorerPage: React.FC = () => {
               ref={svgRef}
               className="w-full h-full select-none"
               viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
-              style={{ cursor: isPanning ? 'grabbing' : 'grab', minHeight: 500 }}
+              style={{ cursor: isPanning ? 'grabbing' : 'grab', minHeight: 560 }}
               onMouseDown={onSvgMouseDown}
               onMouseMove={onSvgMouseMove}
               onMouseUp={onSvgMouseUp}
@@ -1770,22 +1955,38 @@ export const GraphExplorerPage: React.FC = () => {
 
               {/* Edges */}
               {edges.map((edge, idx) => {
+                const edgeKey = edge.id || `${edge.source}-${edge.target}-${idx}`;
                 const src = positions.get(edge.source);
                 const tgt = positions.get(edge.target);
                 if (!src || !tgt) return null;
-                const mx = (src.x + tgt.x) / 2;
-                const my = (src.y + tgt.y) / 2;
+                const label = String(edge.type || '').replace(/_/g, ' ');
+                const labelLayout = edgeLabelLayouts.get(edgeKey);
+                const showLabel = Boolean(labelLayout && !labelLayout.hidden);
                 return (
-                  <g key={edge.id || idx}>
+                  <g key={edgeKey}>
                     <line
                       x1={src.x} y1={src.y} x2={tgt.x} y2={tgt.y}
                       stroke="rgba(34,211,238,0.18)"
                       strokeWidth={1.2}
                       markerEnd="url(#arrowhead)"
                     />
-                    <text x={mx} y={my - 4} fill="rgba(34,211,238,0.4)" fontSize={7} fontWeight="600" textAnchor="middle" style={{ pointerEvents: 'none' }}>
-                      {String(edge.type || '').replace(/_/g, ' ')}
-                    </text>
+                    {showLabel && (
+                      <g style={{ pointerEvents: 'none' }}>
+                        <rect
+                          x={(labelLayout?.x || 0) - (labelLayout?.width || 0) / 2}
+                          y={(labelLayout?.y || 0) - (labelLayout?.height || 0) / 2}
+                          width={labelLayout?.width || 0}
+                          height={labelLayout?.height || 0}
+                          rx={7}
+                          fill="rgba(2, 6, 23, 0.82)"
+                          stroke="rgba(34,211,238,0.18)"
+                          strokeWidth={0.8}
+                        />
+                        <text x={labelLayout?.x || 0} y={(labelLayout?.y || 0) + 1} fill="rgba(165,243,252,0.9)" fontSize={7} fontWeight="700" textAnchor="middle" dominantBaseline="middle">
+                          {label}
+                        </text>
+                      </g>
+                    )}
                   </g>
                 );
               })}
@@ -1796,8 +1997,9 @@ export const GraphExplorerPage: React.FC = () => {
                 if (!pos) return null;
                 const color = getColor(n.type);
                 const isSelected = selectedNode?.id === n.id;
-                const r = n.type === 'record' ? 10 : n.type === 'individual' ? 15 : 12;
-                const label = (n.label || n.id || '').toString().slice(0, 20);
+                const r = getNodeCircleRadius(n);
+                const label = getNodeDisplayLabel(n);
+                const labelLayout = nodeLabelLayouts.get(n.id);
 
                 return (
                   <g
@@ -1822,9 +2024,23 @@ export const GraphExplorerPage: React.FC = () => {
                     <text x={pos.x} y={pos.y + 4.5} fill="white" fontSize={9} fontWeight="900" textAnchor="middle" style={{ pointerEvents: 'none' }}>
                       {(n.type || 'U')[0].toUpperCase()}
                     </text>
-                    <text x={pos.x} y={pos.y + r + 12} fill="rgba(255,255,255,0.7)" fontSize={8} fontWeight="600" textAnchor="middle" style={{ pointerEvents: 'none' }}>
-                      {label}
-                    </text>
+                    {labelLayout && (
+                      <g style={{ pointerEvents: 'none' }}>
+                        <rect
+                          x={labelLayout.x - labelLayout.width / 2}
+                          y={labelLayout.y - labelLayout.height / 2}
+                          width={labelLayout.width}
+                          height={labelLayout.height}
+                          rx={8}
+                          fill="rgba(2, 6, 23, 0.88)"
+                          stroke={isSelected ? 'rgba(34,211,238,0.45)' : 'rgba(255,255,255,0.08)'}
+                          strokeWidth={0.9}
+                        />
+                        <text x={labelLayout.x} y={labelLayout.y + 0.5} fill="rgba(255,255,255,0.86)" fontSize={8} fontWeight="700" textAnchor="middle" dominantBaseline="middle">
+                          {label}
+                        </text>
+                      </g>
+                    )}
                   </g>
                 );
               })}

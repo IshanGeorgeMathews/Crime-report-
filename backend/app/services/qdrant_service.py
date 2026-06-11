@@ -95,12 +95,13 @@ class QdrantService:
         if not self._init_qdrant() or not self.client:
             return []
         try:
+            from qdrant_client.http import models
+
             vector = self.embed(query)
             
             # Build filters if passed
             qdrant_filter = None
             if filters:
-                from qdrant_client.http import models
                 must_conditions = []
                 for k, v in filters.items():
                     if v is not None:
@@ -112,13 +113,24 @@ class QdrantService:
                         )
                 if must_conditions:
                     qdrant_filter = models.Filter(must=must_conditions)
-                    
-            results = self.client.search(
-                collection_name=collection,
-                query_vector=vector,
-                query_filter=qdrant_filter,
-                limit=limit
-            )
+
+            if hasattr(self.client, "query_points"):
+                response = self.client.query_points(
+                    collection_name=collection,
+                    query=vector,
+                    query_filter=qdrant_filter,
+                    limit=limit,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                results = getattr(response, "points", [])
+            else:
+                results = self.client.search(
+                    collection_name=collection,
+                    query_vector=vector,
+                    query_filter=qdrant_filter,
+                    limit=limit,
+                )
             
             mapped_results = []
             for hit in results:

@@ -758,94 +758,161 @@ async def clean_junk_graph_nodes(current_user: User = Depends(require_admin)):
 
 # --- Search Endpoints ---
 
+async def _search_profiles_and_items(db: AsyncSession, query: str, limit: int, semantic_fallback: bool = False):
+    """Shared SQL-backed search used by structured search and semantic fallback."""
+    from sqlalchemy import or_, func
+
+    query_text = (query or "").strip()
+    if not query_text:
+        return []
+
+    normalized_query = query_text.lower()
+    query_tokens = [token for token in re.split(r"\W+", normalized_query) if token]
+    results = []
+    seen: set[tuple[str, str]] = set()
+
+    def keyword_score(*values: Optional[str]) -> float:
+        haystack = " ".join(v for v in values if v).lower()
+        if not haystack:
+            return 0.0
+        exact = 1.0 if normalized_query in haystack else 0.0
+        token_hits = sum(1 for token in query_tokens if token in haystack)
+        token_score = token_hits / max(len(query_tokens), 1)
+        return min(1.0, exact * 0.65 + token_score * 0.35)
+
+    profile_result = await db.execute(
+        select(Profile).filter(
+            or_(
+                func.lower(Profile.name).contains(normalized_query),
+                func.lower(Profile.address).contains(normalized_query),
+                func.lower(Profile.activity_type).contains(normalized_query),
+                func.lower(Profile.brief_history).contains(normalized_query),
+            )
+        ).limit(limit)
+    )
+    profiles = profile_result.scalars().all()
+    for profile in profiles:
+        result_id = ("profile", profile.id)
+        if result_id in seen:
+            continue
+        seen.add(result_id)
+        score = keyword_score(
+            profile.name,
+            profile.address,
+            profile.activity_type,
+            profile.brief_history,
+        )
+        if semantic_fallback:
+            score = max(0.35, min(0.78, 0.45 + score * 0.3))
+        else:
+            score = max(0.1, score)
+        results.append(SearchResultResponse(
+            entity_type="profile",
+            title=f"{profile.name} (PP/{profile.pp_id or 'PENDING'})",
+            score=score,
+            snippet=profile.brief_history or f"Suspect profile with activity: {profile.activity_type}",
+            id=profile.id
+        ))
+
+    item_result = await db.execute(
+        select(ReportItem).filter(
+            or_(
+                func.lower(ReportItem.summary_text).contains(normalized_query),
+                func.lower(ReportItem.translated_text).contains(normalized_query),
+                func.lower(ReportItem.raw_text).contains(normalized_query),
+            )
+        ).limit(limit)
+    )
+    items = item_result.scalars().all()
+    for item in items:
+        result_id = ("report_item", item.id)
+        if result_id in seen:
+            continue
+        seen.add(result_id)
+        score = keyword_score(
+            item.summary_text,
+            item.translated_text,
+            item.raw_text,
+            item.category,
+        )
+        if semantic_fallback:
+            score = max(0.32, min(0.74, 0.42 + score * 0.28))
+        else:
+            score = max(0.1, score)
+        results.append(SearchResultResponse(
+            entity_type="report_item",
+            title=f"Consolidated Report Item ({item.category.title()})",
+            score=score,
+            snippet=item.summary_text or item.translated_text or item.raw_text or "",
+            id=item.report_id
+        ))
+
+    results.sort(key=lambda x: x.score, reverse=True)
+    return results[:limit]
+
 @router.post("/search/semantic")
 async def search_semantic(search_req: SearchRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_viewer)):
     """Semantic vector search against indexed collections (report items, suspect profiles)."""
+    limit = max(1, min(search_req.limit or 10, 25))
+
     # Vector query against Qdrant
-    res_profiles = qdrant_service.search(collection="profiles", query=search_req.query, limit=5)
-    res_items = qdrant_service.search(collection="report_items", query=search_req.query, limit=5)
+    res_profiles = qdrant_service.search(collection="profiles", query=search_req.query, limit=limit)
+    res_items = qdrant_service.search(collection="report_items", query=search_req.query, limit=limit)
     
     results = []
+    seen: set[tuple[str, str]] = set()
     
     # Map profiles
     for hit in res_profiles:
-        pid = hit["payload"]["profile_id"]
+        payload = hit.get("payload") or {}
+        pid = payload.get("profile_id") or hit.get("id")
+        if not pid:
+            continue
+        pid = str(pid)
         res_db = await db.execute(select(Profile).filter(Profile.id == pid))
         profile = res_db.scalars().first()
-        if profile:
+        result_id = ("profile", pid)
+        if profile and result_id not in seen:
+            seen.add(result_id)
             results.append(SearchResultResponse(
                 entity_type="profile",
                 title=f"{profile.name} (PP/{profile.pp_id or 'PENDING'})",
-                score=hit["score"],
+                score=float(hit.get("score") or 0.0),
                 snippet=profile.brief_history or f"Suspect profile with activity: {profile.activity_type}",
                 id=profile.id
             ))
             
     # Map report items
     for hit in res_items:
-        ri_id = hit["payload"]["report_item_id"]
+        payload = hit.get("payload") or {}
+        ri_id = payload.get("report_item_id") or hit.get("id")
+        if not ri_id:
+            continue
+        ri_id = str(ri_id)
         res_db = await db.execute(select(ReportItem).filter(ReportItem.id == ri_id))
         item = res_db.scalars().first()
-        if item:
+        result_id = ("report_item", ri_id)
+        if item and result_id not in seen:
+            seen.add(result_id)
             results.append(SearchResultResponse(
                 entity_type="report_item",
                 title=f"Consolidated Report Item ({item.category.title()})",
-                score=hit["score"],
+                score=float(hit.get("score") or 0.0),
                 snippet=item.summary_text or item.translated_text or item.raw_text,
                 id=item.report_id
             ))
-            
-    # Sort merged results by vector similarity score
-    results.sort(key=lambda x: x.score, reverse=True)
-    
-    return {"success": True, "data": results[:search_req.limit]}
+
+    # Fall back to SQL ranking when Qdrant is unavailable, empty, or older point payloads do not map cleanly.
+    if not results:
+        results = await _search_profiles_and_items(db, search_req.query, limit, semantic_fallback=True)
+    else:
+        results.sort(key=lambda x: x.score, reverse=True)
+
+    return {"success": True, "data": results[:limit]}
 
 @router.post("/search/structured")
 async def search_structured(search_req: SearchRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_viewer)):
     """Structured SQL keyword search against profiles and report items."""
-    from sqlalchemy import or_, func
-    keyword = f"%{search_req.query}%"
-    results = []
-
-    # Search profiles
-    profile_result = await db.execute(
-        select(Profile).filter(
-            or_(
-                func.lower(Profile.name).contains(search_req.query.lower()),
-                func.lower(Profile.address).contains(search_req.query.lower()),
-                func.lower(Profile.activity_type).contains(search_req.query.lower()),
-                func.lower(Profile.brief_history).contains(search_req.query.lower()),
-            )
-        ).limit(search_req.limit or 10)
-    )
-    profiles = profile_result.scalars().all()
-    for p in profiles:
-        results.append(SearchResultResponse(
-            entity_type="profile",
-            title=f"{p.name} (PP/{p.pp_id or 'PENDING'})",
-            score=1.0,
-            snippet=p.brief_history or f"Suspect profile with activity: {p.activity_type}",
-            id=p.id
-        ))
-
-    # Search report items
-    item_result = await db.execute(
-        select(ReportItem).filter(
-            or_(
-                func.lower(ReportItem.summary_text).contains(search_req.query.lower()),
-                func.lower(ReportItem.translated_text).contains(search_req.query.lower()),
-                func.lower(ReportItem.raw_text).contains(search_req.query.lower()),
-            )
-        ).limit(search_req.limit or 10)
-    )
-    items = item_result.scalars().all()
-    for item in items:
-        results.append(SearchResultResponse(
-            entity_type="report_item",
-            title=f"Consolidated Report Item ({item.category.title()})",
-            score=1.0,
-            snippet=item.summary_text or item.translated_text or item.raw_text or "",
-            id=item.report_id
-        ))
-
-    return {"success": True, "data": results[: (search_req.limit or 10)]}
+    limit = max(1, min(search_req.limit or 10, 25))
+    results = await _search_profiles_and_items(db, search_req.query, limit)
+    return {"success": True, "data": results}
