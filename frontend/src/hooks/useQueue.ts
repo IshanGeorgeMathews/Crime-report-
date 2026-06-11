@@ -7,7 +7,6 @@ import { useEffect } from 'react';
 
 export const useQueue = (jobId?: string) => {
   const queryClient = useQueryClient();
-  const setActiveJobsCount = useUiStore((state) => state.setActiveJobsCount);
 
   // Query single job details
   const jobQuery = useQuery<ApiResponse<Job>, Error>({
@@ -88,8 +87,8 @@ export const useQueue = (jobId?: string) => {
   const activeCount = jobs.filter((j) => j.status === 'running' || j.status === 'queued').length;
   
   useEffect(() => {
-    setActiveJobsCount(activeCount);
-  }, [activeCount, setActiveJobsCount]);
+    useUiStore.getState().setActiveJobsCount(activeCount);
+  }, [activeCount]);
 
   return {
     job: jobQuery.data?.data,

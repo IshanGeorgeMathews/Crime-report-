@@ -173,7 +173,7 @@ export const DashboardPage: React.FC = () => {
           </div>
           <div className="space-y-0.5">
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Graph Network Nodes</h3>
-            <p className="text-3xl font-black text-slate-900">{stats?.total_nodes || 0}</p>
+            <p className="text-3xl font-black text-slate-900">{stats?.totalNodes || 0}</p>
           </div>
         </div>
       </div>
@@ -1426,27 +1426,39 @@ function useForceLayout(
     });
 
     const k = Math.sqrt((width * height) / (nodes.length || 1));
-    const iterations = 80;
-    const padding = 30;
+    const iterations = 120;
+    const padding = 40;
+    // Temperature scales with canvas diagonal so all nodes can separate
+    const initTemp = Math.sqrt(width * width + height * height) * 0.15;
 
     for (let iter = 0; iter < iterations; iter++) {
-      const temp = 10 * (1 - iter / iterations);
+      const temp = initTemp * (1 - iter / iterations);
 
+      // Accumulate displacement separately — do NOT mutate pos mid-iteration
+      const disp = new Map<string, { x: number; y: number }>();
+      nodes.forEach(n => disp.set(n.id, { x: 0, y: 0 }));
+
+      // Repulsion: every pair pushes apart
       for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
-          const pi = pos.get(nodes[i].id)!;
-          const pj = pos.get(nodes[j].id)!;
+          const idI = nodes[i].id;
+          const idJ = nodes[j].id;
+          const pi = pos.get(idI)!;
+          const pj = pos.get(idJ)!;
           const dx = pi.x - pj.x;
           const dy = pi.y - pj.y;
           const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.1);
           const force = (k * k) / dist;
-          const fx = (dx / dist) * force * 0.05;
-          const fy = (dy / dist) * force * 0.05;
-          pos.set(nodes[i].id, { x: pi.x + fx, y: pi.y + fy });
-          pos.set(nodes[j].id, { x: pj.x - fx, y: pj.y - fy });
+          const fx = (dx / dist) * force;
+          const fy = (dy / dist) * force;
+          const dI = disp.get(idI)!;
+          const dJ = disp.get(idJ)!;
+          disp.set(idI, { x: dI.x + fx, y: dI.y + fy });
+          disp.set(idJ, { x: dJ.x - fx, y: dJ.y - fy });
         }
       }
 
+      // Attraction: edges pull endpoints together
       edges.forEach(e => {
         const ps = pos.get(e.source);
         const pt = pos.get(e.target);
@@ -1454,19 +1466,28 @@ function useForceLayout(
         const dx = pt.x - ps.x;
         const dy = pt.y - ps.y;
         const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.1);
-        const force = (dist * dist) / k * 0.05;
+        const force = (dist * dist) / k;
         const fx = (dx / dist) * force;
         const fy = (dy / dist) * force;
-        pos.set(e.source, { x: ps.x + fx * temp, y: ps.y + fy * temp });
-        pos.set(e.target, { x: pt.x - fx * temp, y: pt.y - fy * temp });
+        const dSrc = disp.get(e.source);
+        const dTgt = disp.get(e.target);
+        if (dSrc && dTgt) {
+          disp.set(e.source, { x: dSrc.x - fx, y: dSrc.y - fy });
+          disp.set(e.target, { x: dTgt.x + fx, y: dTgt.y + fy });
+        }
       });
 
+      // Apply capped displacement
       nodes.forEach(n => {
         const p = pos.get(n.id)!;
-        pos.set(n.id, {
-          x: Math.max(padding, Math.min(width - padding, p.x)),
-          y: Math.max(padding, Math.min(height - padding, p.y)),
-        });
+        const d = disp.get(n.id) || { x: 0, y: 0 };
+        const dLen = Math.max(Math.sqrt(d.x * d.x + d.y * d.y), 0.1);
+        const cappedLen = Math.min(dLen, temp);
+        let newX = p.x + (d.x / dLen) * cappedLen;
+        let newY = p.y + (d.y / dLen) * cappedLen;
+        newX = Math.max(padding, Math.min(width - padding, newX));
+        newY = Math.max(padding, Math.min(height - padding, newY));
+        pos.set(n.id, { x: newX, y: newY });
       });
     }
 
@@ -1676,12 +1697,12 @@ export const GraphExplorerPage: React.FC = () => {
           <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 space-y-3">
             <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 pb-2">DB Overview</h3>
             {[
-              { label: 'Total Nodes', val: stats?.total_nodes },
-              { label: 'Edges', val: stats?.total_edges },
-              { label: 'Suspects', val: stats?.individual_nodes },
-              { label: 'Crime Events', val: stats?.crime_nodes },
-              { label: 'Records', val: stats?.record_nodes },
-              { label: 'Cases', val: stats?.case_nodes },
+              { label: 'Total Nodes', val: stats?.totalNodes },
+              { label: 'Edges', val: stats?.totalEdges },
+              { label: 'Suspects', val: stats?.individualNodes },
+              { label: 'Crime Events', val: stats?.crimeNodes },
+              { label: 'Records', val: stats?.recordNodes },
+              { label: 'Cases', val: stats?.caseNodes },
             ].map(row => (
               <div key={row.label} className="flex justify-between items-center text-xs">
                 <span className="text-slate-500 font-medium">{row.label}</span>
@@ -2104,11 +2125,11 @@ export const UserManagementPage: React.FC = () => {
       addToast("You cannot deactivate your own administrative session.", "error");
       return;
     }
-    const actionWord = targetUser.is_active ? 'deactivate' : 'activate';
+    const actionWord = targetUser.isActive ? 'deactivate' : 'activate';
     if (!window.confirm(`Are you sure you want to ${actionWord} officer ${targetUser.username}?`)) return;
 
     try {
-      if (targetUser.is_active) {
+      if (targetUser.isActive) {
         const response = await deactivateUser(targetUser.id);
         if (response.success) {
           addToast(`Officer deactivated successfully`, 'success');
@@ -2133,7 +2154,7 @@ export const UserManagementPage: React.FC = () => {
         fullName: editingUser.fullName,
         role: editingUser.role,
         district: editingUser.district || undefined,
-        isActive: editingUser.is_active
+        isActive: editingUser.isActive
       });
       if (response.success) {
         addToast(`User updated successfully`, 'success');
@@ -2198,11 +2219,11 @@ export const UserManagementPage: React.FC = () => {
                 </td>
                 <td className="p-4 font-semibold text-slate-700">{u.district || 'HQ'}</td>
                 <td className="p-4 font-medium text-slate-400">
-                  {u.last_login_at ? new Date(u.last_login_at).toLocaleString() : 'Never'}
+                  {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : 'Never'}
                 </td>
                 <td className="p-4">
-                  <Badge variant={u.is_active ? 'green' : 'gray'}>
-                    {u.is_active ? 'active' : 'inactive'}
+                  <Badge variant={u.isActive ? 'green' : 'gray'}>
+                    {u.isActive ? 'active' : 'inactive'}
                   </Badge>
                 </td>
                 <td className="p-4 text-right space-x-2 shrink-0">
@@ -2217,12 +2238,12 @@ export const UserManagementPage: React.FC = () => {
                     onClick={() => handleToggleActive(u)}
                     disabled={u.id === currentUser?.id}
                     className={`px-2 py-1 text-[10px] font-bold rounded-lg border transition-colors ${
-                      u.is_active
+                      u.isActive
                         ? 'text-rose-600 bg-rose-50 border-rose-100 hover:bg-rose-100'
                         : 'text-emerald-600 bg-emerald-50 border-emerald-100 hover:bg-emerald-100'
                     }`}
                   >
-                    {u.is_active ? 'Deactivate' : 'Reactivate'}
+                    {u.isActive ? 'Deactivate' : 'Reactivate'}
                   </button>
                 </td>
               </tr>

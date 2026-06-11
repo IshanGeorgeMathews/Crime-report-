@@ -799,3 +799,53 @@ async def search_semantic(search_req: SearchRequest, db: AsyncSession = Depends(
     results.sort(key=lambda x: x.score, reverse=True)
     
     return {"success": True, "data": results[:search_req.limit]}
+
+@router.post("/search/structured")
+async def search_structured(search_req: SearchRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_viewer)):
+    """Structured SQL keyword search against profiles and report items."""
+    from sqlalchemy import or_, func
+    keyword = f"%{search_req.query}%"
+    results = []
+
+    # Search profiles
+    profile_result = await db.execute(
+        select(Profile).filter(
+            or_(
+                func.lower(Profile.name).contains(search_req.query.lower()),
+                func.lower(Profile.address).contains(search_req.query.lower()),
+                func.lower(Profile.activity_type).contains(search_req.query.lower()),
+                func.lower(Profile.brief_history).contains(search_req.query.lower()),
+            )
+        ).limit(search_req.limit or 10)
+    )
+    profiles = profile_result.scalars().all()
+    for p in profiles:
+        results.append(SearchResultResponse(
+            entity_type="profile",
+            title=f"{p.name} (PP/{p.pp_id or 'PENDING'})",
+            score=1.0,
+            snippet=p.brief_history or f"Suspect profile with activity: {p.activity_type}",
+            id=p.id
+        ))
+
+    # Search report items
+    item_result = await db.execute(
+        select(ReportItem).filter(
+            or_(
+                func.lower(ReportItem.summary_text).contains(search_req.query.lower()),
+                func.lower(ReportItem.translated_text).contains(search_req.query.lower()),
+                func.lower(ReportItem.raw_text).contains(search_req.query.lower()),
+            )
+        ).limit(search_req.limit or 10)
+    )
+    items = item_result.scalars().all()
+    for item in items:
+        results.append(SearchResultResponse(
+            entity_type="report_item",
+            title=f"Consolidated Report Item ({item.category.title()})",
+            score=1.0,
+            snippet=item.summary_text or item.translated_text or item.raw_text or "",
+            id=item.report_id
+        ))
+
+    return {"success": True, "data": results[: (search_req.limit or 10)]}

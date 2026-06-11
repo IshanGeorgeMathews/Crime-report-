@@ -11,11 +11,14 @@ class QdrantService:
         self.client = None
         self.model = None
         self._initialized = False
+        self._success = False
 
     def _init_qdrant(self):
         """Lazy init Qdrant client and SentenceTransformer model."""
         if self._initialized:
-            return True
+            return self._success
+        
+        self._initialized = True
         try:
             from qdrant_client import QdrantClient
             from qdrant_client.http.exceptions import UnexpectedResponse
@@ -40,11 +43,13 @@ class QdrantService:
                         vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE)
                     )
                     print(f"[Qdrant Service] Created collection: {col}")
-            self._initialized = True
+            self._success = True
             return True
         except Exception as e:
             print(f"[Warning] Qdrant/SentenceTransformer initialization failed: {e}. Semantic search disabled.")
-            self._initialized = False
+            self.client = None
+            self.model = None
+            self._success = False
             return False
 
     def embed(self, text: str) -> List[float]:

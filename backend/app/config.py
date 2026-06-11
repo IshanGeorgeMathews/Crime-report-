@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     NER_MODEL_PATH: str = "dslim/bert-base-NER"
     TRANSLATION_MODEL_PATH: str = "ai4bharat/indictrans2-indic-en-1B"
     SENTENCE_TRANSFORMER_MODEL_PATH: str = "all-MiniLM-L6-v2"
+    DISABLE_INDIC_TRANS: str = "0"
     
     # CORS
     BACKEND_CORS_ORIGINS: Union[List[str], str] = [

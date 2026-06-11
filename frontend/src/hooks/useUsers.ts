@@ -8,9 +8,9 @@ export interface UserListItem {
   fullName: string;
   role: 'admin' | 'supervisor' | 'analyst' | 'viewer';
   district?: string;
-  is_active: boolean;
-  last_login_at?: string;
-  created_at: string;
+  isActive: boolean;
+  lastLoginAt?: string;
+  createdAt: string;
 }
 
 export const useUsers = () => {

@@ -548,17 +548,17 @@ class ConsolidationService:
                     warning=f"PostgreSQL write failed: {str(pg_err)}"
                 )
 
-            # 4. Sync Profiles in filesystem + Neo4j Graph
             # NOTE: _sync_profiles_from_texts is a synchronous/blocking function.
             # We run it in a thread executor so it does not block the async event loop.
             await self.update_job(
                 db, job_id,
                 status="neo4j_sync",
-                progress=75,
-                current_step="Extracting suspect names, GNN disambiguation, and updating Neo4j graph"
+                progress=72,
+                current_step="Extracting suspect names, GNN disambiguation, updating profiles and Neo4j graph"
             )
 
             all_raw_texts = event_raw_texts + forecast_raw_texts + social_media_raw_texts
+            profile_sync_ok = False
             try:
                 import asyncio
                 loop = asyncio.get_event_loop()
@@ -566,31 +566,44 @@ class ConsolidationService:
                     None,
                     lambda: _sync_profiles_from_texts(all_raw_texts, date_str, use_ollama)
                 )
-            except Exception as neo4j_err:
-                print(f"[Warning] Neo4j / profile sync failed (skipping): {neo4j_err}")
+                profile_sync_ok = True
                 await self.update_job(
                     db, job_id,
                     status="neo4j_sync",
-                    progress=75,
-                    current_step="Neo4j sync skipped — continuing with DOCX generation",
+                    progress=80,
+                    current_step="Suspect profiles and Neo4j graph updated successfully"
+                )
+            except Exception as neo4j_err:
+                print(f"[Warning] Neo4j / profile sync failed: {neo4j_err}")
+                import traceback
+                traceback.print_exc()
+                await self.update_job(
+                    db, job_id,
+                    status="neo4j_sync",
+                    progress=80,
+                    current_step=f"Profile/Neo4j sync encountered errors — will still attempt DB sync",
                     warning=f"Neo4j sync error: {str(neo4j_err)}"
                 )
 
-            # 5. Sync Profiles from filesystem to SQL DB + Qdrant Index (optional)
+            # 5. Sync Profiles from filesystem to SQL DB + Qdrant Index
+            # Always run this step — even if step 4 partially succeeded it may have
+            # written new/updated docx files to PP_DIR that need to reach the SQL DB.
+            await self.update_job(
+                db, job_id,
+                status="profile_db_sync",
+                progress=85,
+                current_step="Synchronizing suspect profiles to database and Qdrant index"
+            )
             try:
-                await self.update_job(
-                    db, job_id,
-                    status="qdrant_indexing",
-                    progress=85,
-                    current_step="Synchronizing suspect profiles to database and Qdrant index"
-                )
                 await self.profile_service.sync_all_profiles_to_db(db)
 
                 # Index Report Items in Qdrant
                 if report and all_items:
+                    import asyncio
                     for item in all_items:
                         summary_text = item.summary_text or item.translated_text or ""
-                        self.qdrant.upsert_item(
+                        await asyncio.to_thread(
+                            self.qdrant.upsert_item,
                             collection="report_items",
                             point_id=item.id,
                             text=summary_text,
@@ -601,14 +614,20 @@ class ConsolidationService:
                                 "category": item.category
                             }
                         )
-            except Exception as qdrant_err:
-                print(f"[Warning] Profile DB sync / Qdrant indexing failed (skipping): {qdrant_err}")
                 await self.update_job(
                     db, job_id,
-                    status="qdrant_indexing",
-                    progress=85,
-                    current_step="Profile/Qdrant sync skipped — continuing with DOCX generation",
-                    warning=f"Qdrant/profile sync error: {str(qdrant_err)}"
+                    status="profile_db_sync",
+                    progress=90,
+                    current_step="Suspect records updated in database — profiles are now visible in Suspect Records"
+                )
+            except Exception as qdrant_err:
+                print(f"[Warning] Profile DB sync / Qdrant indexing failed: {qdrant_err}")
+                await self.update_job(
+                    db, job_id,
+                    status="profile_db_sync",
+                    progress=90,
+                    current_step="Profile DB/Qdrant sync encountered errors — continuing with DOCX generation",
+                    warning=f"Profile DB sync error: {str(qdrant_err)}"
                 )
 
             # 6. Build Consolidated DOCX Files on Disk
@@ -680,6 +699,10 @@ class ConsolidationService:
         except Exception as e:
             import traceback
             traceback.print_exc()
+            try:
+                await db.rollback()
+            except Exception:
+                pass
             try:
                 await self.update_job(
                     db, job_id,

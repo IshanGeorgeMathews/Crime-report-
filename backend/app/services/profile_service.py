@@ -42,8 +42,9 @@ class ProfileService:
             db_prof = result.scalars().first()
             
             # Map docx keys to DB columns
+            pp_id_val = fs_prof.pp_id.strip() if fs_prof.pp_id and fs_prof.pp_id.strip() else None
             profile_data = {
-                "pp_id": fs_prof.pp_id,
+                "pp_id": pp_id_val,
                 "name": name,
                 "parentage": fs_prof.parentage,
                 "address": fs_prof.address,
@@ -70,6 +71,8 @@ class ProfileService:
             else:
                 for k, v in profile_data.items():
                     setattr(db_prof, k, v)
+                # Always stamp updated_at so frontend sees fresh data
+                db_prof.updated_at = datetime.utcnow()
             
             # Recreate relations in DB
             await db.execute(delete(ProfileRelation).where(ProfileRelation.profile_id == db_prof.id))
@@ -124,7 +127,9 @@ class ProfileService:
             
             # Index in Qdrant
             summary_text = f"{name}. {fs_prof.activity_type}. {fs_prof.address}. PS: {fs_prof.police_station}. History: {profile_data['brief_history']}"
-            self.qdrant.upsert_item(
+            import asyncio
+            await asyncio.to_thread(
+                self.qdrant.upsert_item,
                 collection="profiles",
                 point_id=db_prof.id,
                 text=summary_text,
@@ -242,7 +247,10 @@ class ProfileService:
         
         for json_key, db_col in field_mappings.items():
             if json_key in updates:
-                setattr(profile, db_col, updates[json_key])
+                val = updates[json_key]
+                if db_col == "pp_id" and isinstance(val, str):
+                    val = val.strip() if val.strip() else None
+                setattr(profile, db_col, val)
                 
         profile.updated_at = datetime.utcnow()
         await db.commit()
@@ -252,7 +260,9 @@ class ProfileService:
         
         # Update Qdrant
         summary_text = f"{profile.name}. {profile.activity_type}. {profile.address}. PS: {profile.police_station}. History: {profile.brief_history}"
-        self.qdrant.upsert_item(
+        import asyncio
+        await asyncio.to_thread(
+            self.qdrant.upsert_item,
             collection="profiles",
             point_id=profile.id,
             text=summary_text,

@@ -21,47 +21,73 @@ function useForceLayout(
     });
 
     const k = Math.sqrt((width * height) / (nodes.length || 1));
-    const iterations = 80;
-    const padding = 30;
+    const iterations = 120;
+    const padding = 40;
+    // Temperature proportional to canvas diagonal so nodes actually spread for large graphs
+    const initTemp = Math.sqrt(width * width + height * height) * 0.15;
 
     for (let iter = 0; iter < iterations; iter++) {
-      const temp = 10 * (1 - iter / iterations);
+      const temp = initTemp * (1 - iter / iterations);
 
+      // Initialize displacement map
+      const disp = new Map<string, { x: number; y: number }>();
+      nodes.forEach(n => disp.set(n.id, { x: 0, y: 0 }));
+
+      // Repulsion forces between all node pairs
       for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
-          const pi = pos.get(nodes[i].id)!;
-          const pj = pos.get(nodes[j].id)!;
+          const idI = nodes[i].id;
+          const idJ = nodes[j].id;
+          const pi = pos.get(idI)!;
+          const pj = pos.get(idJ)!;
           const dx = pi.x - pj.x;
           const dy = pi.y - pj.y;
-          const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.1);
+          const dist = Math.sqrt(dx * dx + dy * dy) || 0.1;
           const force = (k * k) / dist;
           const fx = (dx / dist) * force * 0.05;
           const fy = (dy / dist) * force * 0.05;
-          pos.set(nodes[i].id, { x: pi.x + fx, y: pi.y + fy });
-          pos.set(nodes[j].id, { x: pj.x - fx, y: pj.y - fy });
+
+          const dispI = disp.get(idI)!;
+          const dispJ = disp.get(idJ)!;
+          disp.set(idI, { x: dispI.x + fx, y: dispI.y + fy });
+          disp.set(idJ, { x: dispJ.x - fx, y: dispJ.y - fy });
         }
       }
 
+      // Attraction forces along edges
       edges.forEach(e => {
         const ps = pos.get(e.source);
         const pt = pos.get(e.target);
         if (!ps || !pt) return;
         const dx = pt.x - ps.x;
         const dy = pt.y - ps.y;
-        const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.1);
+        const dist = Math.sqrt(dx * dx + dy * dy) || 0.1;
         const force = (dist * dist) / k * 0.05;
         const fx = (dx / dist) * force;
         const fy = (dy / dist) * force;
-        pos.set(e.source, { x: ps.x + fx * temp, y: ps.y + fy * temp });
-        pos.set(e.target, { x: pt.x - fx * temp, y: pt.y - fy * temp });
+
+        const dispSrc = disp.get(e.source);
+        const dispTgt = disp.get(e.target);
+        if (dispSrc && dispTgt) {
+          disp.set(e.source, { x: dispSrc.x - fx, y: dispSrc.y - fy });
+          disp.set(e.target, { x: dispTgt.x + fx, y: dispTgt.y + fy });
+        }
       });
 
+      // Update positions with temperature capping
       nodes.forEach(n => {
         const p = pos.get(n.id)!;
-        pos.set(n.id, {
-          x: Math.max(padding, Math.min(width - padding, p.x)),
-          y: Math.max(padding, Math.min(height - padding, p.y)),
-        });
+        const d = disp.get(n.id) || { x: 0, y: 0 };
+        const dLen = Math.sqrt(d.x * d.x + d.y * d.y) || 0.1;
+        const cappedLen = Math.min(dLen, temp);
+        
+        let newX = p.x + (d.x / dLen) * cappedLen;
+        let newY = p.y + (d.y / dLen) * cappedLen;
+
+        newX = Math.max(padding, Math.min(width - padding, newX));
+        newY = Math.max(padding, Math.min(height - padding, newY));
+
+        pos.set(n.id, { x: newX, y: newY });
       });
     }
 

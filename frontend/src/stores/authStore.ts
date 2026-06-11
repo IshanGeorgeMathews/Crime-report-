@@ -38,19 +38,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     localStorage.removeItem('kpip_token');
     localStorage.removeItem('kpip_user');
     set({
-      user: {
-        id: "admin-id",
-        username: "admin",
-        fullName: "System Administrator (Testing)",
-        role: "admin",
-        district: "PKD"
-      },
-      token: "mock-admin-token",
+      user: null,
+      token: null,
       isInitializing: false
     });
   },
   isAuthenticated: () => {
-    return true;
+    return get().token !== null && get().user !== null;
   },
   setInitializing: (v) => set({ isInitializing: v }),
   syncUser: (user) => {

@@ -2,7 +2,7 @@ import React from 'react';
 
 export interface BadgeProps {
   children: React.ReactNode;
-  variant?: 'blue' | 'amber' | 'green' | 'red' | 'gray';
+  variant?: 'blue' | 'amber' | 'green' | 'red' | 'gray' | 'orange';
   className?: string;
 }
 
@@ -19,6 +19,7 @@ export const Badge: React.FC<BadgeProps> = ({
     green: 'bg-emerald-100 text-emerald-800 border border-emerald-200/50',
     red: 'bg-rose-100 text-rose-800 border border-rose-200/50',
     gray: 'bg-slate-100 text-slate-700 border border-slate-200/50',
+    orange: 'bg-orange-100 text-orange-800 border border-orange-200/50',
   };
 
   return <span className={`${baseStyle} ${variants[variant]} ${className}`}>{children}</span>;

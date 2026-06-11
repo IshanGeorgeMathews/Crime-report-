@@ -161,6 +161,22 @@ class TranslationEngine:
         self.indic_attempted = True
             
         try:
+            import sys
+            import transformers
+            from types import ModuleType
+            try:
+                import transformers.onnx
+            except ImportError:
+                mock_onnx = ModuleType("transformers.onnx")
+                mock_onnx.OnnxConfig = object
+                mock_onnx.OnnxSeq2SeqConfigWithPast = object
+                mock_onnx_utils = ModuleType("transformers.onnx.utils")
+                mock_onnx_utils.compute_effective_axis_dimension = lambda *args, **kwargs: None
+                mock_onnx.utils = mock_onnx_utils
+                transformers.onnx = mock_onnx
+                sys.modules["transformers.onnx"] = mock_onnx
+                sys.modules["transformers.onnx.utils"] = mock_onnx_utils
+
             import torch
             from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
             
@@ -176,8 +192,38 @@ class TranslationEngine:
                 torch_dtype=torch.float16 if self.device == "cuda" else torch.float32
             ).to(self.device)
             self.model.eval()
+
+            # Monkey-patch decoder forward to convert EncoderDecoderCache to legacy format for transformers v5 compatibility
+            import types
+            old_forward = self.model.model.decoder.forward
+            def new_forward(decoder_self, input_ids=None, attention_mask=None, encoder_hidden_states=None, encoder_attention_mask=None, **kwargs):
+                past_key_values = kwargs.get("past_key_values")
+                if past_key_values is not None and not isinstance(past_key_values, (list, tuple)):
+                    # Convert EncoderDecoderCache to legacy format
+                    self_legacy = [(k, v) for k, v, *rest in past_key_values.self_attention_cache]
+                    cross_legacy = [(k, v) for k, v, *rest in past_key_values.cross_attention_cache]
+                    legacy = []
+                    for idx in range(len(self_legacy)):
+                        self_kv = self_legacy[idx]
+                        cross_kv = cross_legacy[idx] if idx < len(cross_legacy) else (None, None)
+                        if self_kv[0] is not None and cross_kv[0] is not None:
+                            legacy.append(self_kv + cross_kv)
+                        elif self_kv[0] is not None:
+                            legacy.append(self_kv)
+                        else:
+                            legacy.append(None)
+                    
+                    if all(x is None for x in legacy):
+                        past_key_values = None
+                    else:
+                        past_key_values = legacy
+                    kwargs["past_key_values"] = past_key_values
+                return old_forward(input_ids=input_ids, attention_mask=attention_mask, encoder_hidden_states=encoder_hidden_states, encoder_attention_mask=encoder_attention_mask, **kwargs)
+            
+            self.model.model.decoder.forward = types.MethodType(new_forward, self.model.model.decoder)
+
             self.initialized = True
-            print(f"  [IndicTrans2] Model loaded successfully on {self.device}.")
+            print(f"  [IndicTrans2] Model loaded successfully on {self.device} (patched for cache compatibility).")
             return True
         except Exception as e:
             print(f"  [Warning] IndicTrans2 loading failed: {e}. Operating in fallback mode.")
@@ -198,10 +244,11 @@ class TranslationEngine:
             try:
                 import torch
                 # Format for IndicTrans2 tokenizer
+                formatted_text = f"{src_lang} eng_Latn {text}"
                 inputs = self.tokenizer(
-                    [text], 
-                    src_lang=src_lang, 
-                    tgt_lang="eng_Latn", 
+                    [formatted_text], 
+                    truncation=True,
+                    max_length=256,
                     return_tensors="pt"
                 ).to(self.device)
                 

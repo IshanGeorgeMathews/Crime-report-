@@ -35,6 +35,7 @@ export const useAuth = () => {
       // Token is invalid/expired — clear everything and force re-login
       logoutStore();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meQuery.isSuccess, meQuery.isError, meQuery.data]);
 
   // If there's no token at all, initialization is already done (handled in authStore)

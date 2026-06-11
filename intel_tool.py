@@ -164,7 +164,7 @@ Translated source:
                 "stream": False,
                 "options": {"temperature": 0.1, "top_p": 0.7},
             },
-            timeout=90,
+            timeout=45,
         )
         if r.status_code != 200:
             print(f"    [Warning] Gemma summary failed with HTTP {r.status_code}; using translated text.")
@@ -274,7 +274,7 @@ Source text:
                 "stream": False,
                 "options": {"temperature": 0.1, "top_p": 0.9},
             },
-            timeout=90,
+            timeout=45,
         )
         if r.status_code == 200:
             response_text = r.json().get("response", "").strip()

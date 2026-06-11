@@ -1,9 +1,15 @@
 import app.core.paths  # Configures Python path for importing existing modules
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.future import select
 
 from app.config import settings
+
+# Propagate pydantic config settings to os.environ for non-pydantic modules (like translation.py)
+os.environ["DISABLE_INDIC_TRANS"] = getattr(settings, "DISABLE_INDIC_TRANS", "0")
+os.environ["TRANSLATION_MODEL_PATH"] = getattr(settings, "TRANSLATION_MODEL_PATH", "")
+
 from app.db.session import engine, Base, AsyncSessionLocal
 from app.db.models import User
 from app.core import security

@@ -89,13 +89,29 @@ if (VITE_USE_MOCK) {
       } as any;
     };
 
+    // Helper to safely parse JSON body (handles FormData gracefully)
+    const parseBody = (data: any): Record<string, any> => {
+      if (!data) return {};
+      if (typeof data === 'string') {
+        try { return JSON.parse(data); } catch { return {}; }
+      }
+      if (data instanceof FormData) {
+        const result: Record<string, any> = {};
+        data.forEach((value, key) => { result[key] = value; });
+        return result;
+      }
+      if (typeof data === 'object') return data;
+      return {};
+    };
+
     // --- Mock Auth Routes ---
     if (url.includes('/auth/login') && method === 'post') {
-      const { username } = JSON.parse(config.data || '{}');
+      const body = parseBody(config.data);
+      const username = body.username || 'analyst';
       const user = {
         id: 'usr-1',
         username,
-        fullName: username === 'admin' ? 'System Administrator' : 'SI Pradeep Kumar',
+        fullName: username === 'admin' ? 'System Administrator' : username === 'supervisor' ? 'DSP Pradeep Kumar' : 'SI Pradeep Kumar',
         role: username === 'admin' ? 'admin' : username === 'supervisor' ? 'supervisor' : 'analyst',
         district: 'PKD',
       };
@@ -116,6 +132,14 @@ if (VITE_USE_MOCK) {
       return Promise.reject({ config, mockResponse: mockResponse(user) });
     }
 
+    if (url.includes('/auth/logout') && method === 'post') {
+      return Promise.reject({ config, mockResponse: mockResponse(null) });
+    }
+
+    if (url.includes('/auth/change-password') && method === 'post') {
+      return Promise.reject({ config, mockResponse: mockResponse({ changed: true }) });
+    }
+
     // --- Mock Consolidation Routes ---
     if (url.includes('/consolidate/upload') && method === 'post') {
       return Promise.reject({
@@ -124,10 +148,25 @@ if (VITE_USE_MOCK) {
       });
     }
 
-    // --- Mock Jobs Routes ---
-    if (url.includes('/jobs/') && method === 'get') {
+    // --- Mock Jobs Routes (order matters: specific patterns before general) ---
+    if (url.match(/\/jobs\/[^/]+\/cancel$/) && method === 'post') {
+      return Promise.reject({ config, mockResponse: mockResponse(null) });
+    }
+
+    if (url.match(/\/jobs\/[^/]+\/stop$/) && method === 'post') {
+      return Promise.reject({ config, mockResponse: mockResponse(null) });
+    }
+
+    if (url.match(/\/jobs\/[^/]+\/resume$/) && method === 'post') {
+      return Promise.reject({ config, mockResponse: mockResponse(null) });
+    }
+
+    if (url.match(/\/jobs\/[^/]+$/) && method === 'delete') {
+      return Promise.reject({ config, mockResponse: mockResponse(null) });
+    }
+
+    if (url.match(/\/jobs\/[^/]+$/) && method === 'get') {
       const jobId = url.split('/').pop();
-      // Mock progress
       const job = {
         id: jobId,
         jobType: 'consolidation',
@@ -159,7 +198,16 @@ if (VITE_USE_MOCK) {
           currentStep: 'Waiting for worker...',
           createdBy: 'System Scheduler',
           createdAt: new Date().toISOString(),
-        }
+        },
+        {
+          id: 'job-103',
+          jobType: 'consolidation',
+          status: 'completed',
+          progress: 100,
+          currentStep: 'Completed successfully',
+          createdBy: 'admin',
+          createdAt: new Date(Date.now() - 3600000).toISOString(),
+        },
       ];
       return Promise.reject({ config, mockResponse: mockResponse(activeJobs) });
     }
@@ -193,7 +241,15 @@ if (VITE_USE_MOCK) {
       return Promise.reject({ config, mockResponse: mockResponse(reports) });
     }
 
-    if (url.includes('/reports/') && method === 'get') {
+    if (url.match(/\/reports\/[^/]+\/download$/) && method === 'get') {
+      return Promise.reject({ config, mockResponse: { data: new Blob(['MOCK DOCX'], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), status: 200, statusText: 'OK', headers: {}, config } });
+    }
+
+    if (url.match(/\/reports\/[^/]+\/less-priority\/download$/) && method === 'get') {
+      return Promise.reject({ config, mockResponse: { data: new Blob(['MOCK DOCX LP'], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), status: 200, statusText: 'OK', headers: {}, config } });
+    }
+
+    if (url.match(/\/reports\/[^/]+$/) && method === 'get') {
       const reportId = url.split('/').pop();
       const reportMetadata = {
         id: reportId,
@@ -242,7 +298,15 @@ if (VITE_USE_MOCK) {
       return Promise.reject({ config, mockResponse: mockResponse({ ...reportMetadata, items }) });
     }
 
-    // --- Mock Profile Routes ---
+    // --- Mock Profile Routes (specific before general) ---
+    if (url.match(/\/profiles\/[^/]+\/docx$/) && method === 'get') {
+      return Promise.reject({ config, mockResponse: { data: new Blob(['MOCK PP DOCX'], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), status: 200, statusText: 'OK', headers: {}, config } });
+    }
+
+    if (url.match(/\/profiles\/[^/]+\/generate-uo$/) && method === 'get') {
+      return Promise.reject({ config, mockResponse: { data: new Blob(['MOCK UO NOTE'], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), status: 200, statusText: 'OK', headers: {}, config } });
+    }
+
     if (url === '/profiles' && method === 'get') {
       const profiles = [
         {
@@ -255,6 +319,7 @@ if (VITE_USE_MOCK) {
           activityType: 'Extremism',
           reviewStatus: 'approved',
           updatedAt: new Date().toISOString(),
+          createdAt: new Date(Date.now() - 31536000000).toISOString(),
         },
         {
           id: 'prof-2',
@@ -266,6 +331,7 @@ if (VITE_USE_MOCK) {
           activityType: 'Extremism',
           reviewStatus: 'approved',
           updatedAt: new Date().toISOString(),
+          createdAt: new Date(Date.now() - 31536000000).toISOString(),
         },
         {
           id: 'prof-3',
@@ -277,12 +343,17 @@ if (VITE_USE_MOCK) {
           activityType: 'Left Wing Extremism',
           reviewStatus: 'pending',
           updatedAt: new Date().toISOString(),
+          createdAt: new Date(Date.now() - 31536000000).toISOString(),
         }
       ];
       return Promise.reject({ config, mockResponse: mockResponse({ items: profiles, total: 3, page: 1, limit: 10, pages: 1 }) });
     }
 
-    if (url.includes('/profiles/') && method === 'get') {
+    if (url.match(/\/profiles\/[^/]+$/) && method === 'put') {
+      return Promise.reject({ config, mockResponse: mockResponse({ id: url.split('/').pop(), updated: true }) });
+    }
+
+    if (url.match(/\/profiles\/[^/]+$/) && method === 'get') {
       const profileId = url.split('/').pop();
       const profile = {
         id: profileId,
@@ -349,16 +420,16 @@ if (VITE_USE_MOCK) {
           name: 'Subin Kizhakkedath',
           source: 'Report dated 04.06.2026: Subin Kizhakkedath organized a secret meeting at a local homestay.',
           extractionMethod: 'LLM classification',
-          anomalyFlags: 'None',
+          anomalyFlags: '',
           status: 'pending',
         }
       ];
       return Promise.reject({ config, mockResponse: mockResponse(reviewItems) });
     }
 
-    if (url.includes('/review/') && method === 'post') {
+    if (url.match(/\/review\/[^/]+\/(approve|reject)$/) && method === 'post') {
       const parts = url.split('/');
-      const action = parts.pop(); // approve / reject
+      const action = parts.pop();
       const id = parts.pop();
       return Promise.reject({ config, mockResponse: mockResponse({ id, status: action === 'approve' ? 'approved' : 'rejected' }) });
     }
@@ -368,12 +439,13 @@ if (VITE_USE_MOCK) {
       return Promise.reject({
         config,
         mockResponse: mockResponse({
-          total_nodes: 142,
-          total_edges: 387,
-          individual_nodes: 34,
-          crime_nodes: 72,
-          record_nodes: 24,
-          edge_types: {
+          totalNodes: 142,
+          totalEdges: 387,
+          individualNodes: 34,
+          crimeNodes: 72,
+          recordNodes: 24,
+          caseNodes: 18,
+          edgeTypes: {
             ASSOCIATED_WITH: 110,
             MENTIONED_IN: 140,
             CO_OCCURRED_WITH: 85,
@@ -382,6 +454,10 @@ if (VITE_USE_MOCK) {
           },
         }),
       });
+    }
+
+    if (url.includes('/graph/clean') && method === 'post') {
+      return Promise.reject({ config, mockResponse: mockResponse({ removedCount: 3 }) });
     }
 
     if (url.includes('/graph/query') && method === 'get') {
@@ -432,10 +508,100 @@ if (VITE_USE_MOCK) {
       return Promise.reject({ config, mockResponse: mockResponse(results) });
     }
 
+    if (url.includes('/search/structured') && method === 'post') {
+      const results = [
+        {
+          entityType: 'profile',
+          title: 'Vishnu Koya (PP/041/KKD)',
+          score: undefined,
+          snippet: 'Extremist sympathizer arrested for writing pamphlets supporting banned outfits under sections 13 UAPA.',
+          id: 'prof-2',
+        },
+        {
+          entityType: 'report_item',
+          title: 'IS Daily Report 03.06.2026',
+          score: undefined,
+          snippet: 'Kozhikode Town Police arrested Vishnu Koya for distributing inflammatory leaflets.',
+          id: 'rep-2',
+        }
+      ];
+      return Promise.reject({ config, mockResponse: mockResponse(results) });
+    }
+
+    // --- Mock Admin User Routes ---
+    if (url === '/admin/users' && method === 'get') {
+      const users = [
+        {
+          id: 'usr-admin',
+          username: 'admin',
+          fullName: 'System Administrator',
+          role: 'admin',
+          district: null,
+          is_active: true,
+          last_login_at: new Date().toISOString(),
+          created_at: new Date(Date.now() - 86400000 * 30).toISOString(),
+        },
+        {
+          id: 'usr-sup-1',
+          username: 'dsp_pkd',
+          fullName: 'DSP Pradeep Kumar',
+          role: 'supervisor',
+          district: 'PKD',
+          is_active: true,
+          last_login_at: new Date(Date.now() - 3600000).toISOString(),
+          created_at: new Date(Date.now() - 86400000 * 20).toISOString(),
+        },
+        {
+          id: 'usr-ana-1',
+          username: 'si_pradeep',
+          fullName: 'SI Pradeep Kumar',
+          role: 'analyst',
+          district: 'PKD',
+          is_active: true,
+          last_login_at: new Date(Date.now() - 7200000).toISOString(),
+          created_at: new Date(Date.now() - 86400000 * 15).toISOString(),
+        },
+        {
+          id: 'usr-viewer-1',
+          username: 'viewer_kkd',
+          fullName: 'Cmd Room KKD',
+          role: 'viewer',
+          district: 'KKD',
+          is_active: false,
+          last_login_at: null,
+          created_at: new Date(Date.now() - 86400000 * 10).toISOString(),
+        },
+      ];
+      return Promise.reject({ config, mockResponse: mockResponse(users) });
+    }
+
+    if (url === '/admin/users' && method === 'post') {
+      const body = parseBody(config.data);
+      const newUser = {
+        id: 'usr-new-' + Math.random().toString(36).substring(2, 7),
+        username: body.username || 'new_user',
+        fullName: body.fullName || 'New Officer',
+        role: body.role || 'analyst',
+        district: body.district || null,
+        is_active: true,
+        last_login_at: null,
+        created_at: new Date().toISOString(),
+      };
+      return Promise.reject({ config, mockResponse: mockResponse(newUser) });
+    }
+
+    if (url.match(/\/admin\/users\/[^/]+$/) && method === 'put') {
+      return Promise.reject({ config, mockResponse: mockResponse({ id: url.split('/').pop(), updated: true }) });
+    }
+
+    if (url.match(/\/admin\/users\/[^/]+$/) && method === 'delete') {
+      return Promise.reject({ config, mockResponse: mockResponse({ deactivated: true }) });
+    }
+
     // Default error for unmocked routes
     return Promise.reject({
       config,
-      mockResponse: mockResponse({ error: 'Mock endpoint not implemented' }, 404),
+      mockResponse: mockResponse({ error: `Mock endpoint not implemented: ${method.toUpperCase()} ${url}` }, 404),
     });
   }, (error) => {
     // Intercept mock error redirects
