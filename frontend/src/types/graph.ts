@@ -20,6 +20,11 @@ export interface GraphEdge {
   target: string;
   type: 'ASSOCIATED_WITH' | 'MENTIONED_IN' | 'CO_OCCURRED_WITH' | 'MEMBER_OF' | 'ACCUSED_IN' | 'REPORTED_IN';
   weight: number;
+  rawWeight?: number;
+  firstSeen?: string;
+  lastSeen?: string;
+  occurrenceCount?: number;
+  decayHalfLifeDays?: number;
 }
 
 export interface GraphData {
@@ -31,4 +36,5 @@ export interface GnnRecommendation {
   name: string;
   similarity: number;
   hasEdge: boolean;
+  relationshipHint?: string;
 }

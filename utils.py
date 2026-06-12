@@ -434,6 +434,60 @@ def load_profile_database(pp_dir: str) -> list:
 # Name matching & disambiguation
 # ---------------------------------------------------------------------------
 
+def soundex_kerala(name: str) -> str:
+    """A custom Soundex implementation optimized for Kerala/Indian name transliterations.
+    It maps similar sounding characters and consonant groupings (e.g. D/T/Th, G/K, B/P, S/Sh, etc.)
+    to normalize spelling differences (like Sajin vs. Sachin, Shefeeq vs. Shafeek).
+    """
+    if not name:
+        return ""
+    name = name.lower().strip()
+    
+    # 1. Phonetic replacements
+    replacements = [
+        ("ph", "f"), ("bh", "b"), ("dh", "d"), ("th", "t"), ("gh", "g"), ("kh", "k"),
+        ("sh", "s"), ("zh", "l"), ("lh", "l"), ("ch", "s"), ("c", "k"), ("j", "s"),
+        ("oo", "u"), ("ee", "i"), ("ei", "i"), ("ie", "i"), ("y", "i"), ("w", "v"),
+        ("krishnan", "krishn"), ("ramachandran", "ramachandr"), ("raghavan", "raghavn")
+    ]
+    for orig, rep in replacements:
+        name = name.replace(orig, rep)
+        
+    # Remove all vowels (except first letter) and h, w, y
+    first_char = name[0] if name else ""
+    rest = name[1:] if len(name) > 1 else ""
+    
+    # Map consonant classes
+    # 1: b, f, p, v
+    # 2: c, g, j, k, q, s, x, z
+    # 3: d, t
+    # 4: l
+    # 5: m, n
+    # 6: r
+    mappings = {
+        'b': '1', 'f': '1', 'p': '1', 'v': '1',
+        'g': '2', 'k': '2', 'q': '2', 's': '2', 'x': '2', 'z': '2',
+        'd': '3', 't': '3',
+        'l': '4',
+        'm': '5', 'n': '5',
+        'r': '6'
+    }
+    
+    code = first_char.upper()
+    prev_code = mappings.get(first_char, '')
+    
+    for char in rest:
+        if char in mappings:
+            curr_code = mappings[char]
+            if curr_code != prev_code:
+                code += curr_code
+                prev_code = curr_code
+                
+    # Keep up to 6 characters and pad with 0s
+    code = code[:6].ljust(6, '0')
+    return code
+
+
 def is_fuzzy_match(name1: str, name2: str) -> bool:
     """Return True if name1 and name2 are fuzzy or phonetic matches."""
     n1 = name1.lower().strip()
@@ -441,6 +495,10 @@ def is_fuzzy_match(name1: str, name2: str) -> bool:
     if n1 == n2:
         return True
     
+    # Integrate custom soundex comparison
+    if soundex_kerala(n1) == soundex_kerala(n2):
+        return True
+        
     # Substring check only if BOTH names are multi-word to prevent single-word false positives
     if " " in n1 and " " in n2:
         if len(n1) > 4 and len(n2) > 4:

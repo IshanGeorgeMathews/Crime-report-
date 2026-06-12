@@ -10,6 +10,22 @@ export interface SearchResult {
   id: string;
 }
 
+export interface ChatCitation {
+  entityType: 'profile' | 'report_item' | 'case' | 'organization' | 'crime';
+  title: string;
+  snippet: string;
+  id: string;
+  score?: number;
+}
+
+export interface ChatResponse {
+  answer: string;
+  citations: ChatCitation[];
+  graphSummary?: string;
+  usedFallback: boolean;
+  model?: string | null;
+}
+
 export const useSearch = () => {
   // Semantic search mutation (Qdrant vector similarity check)
   const semanticMutation = useMutation<
@@ -41,6 +57,20 @@ export const useSearch = () => {
     },
   });
 
+  const chatMutation = useMutation<
+    ApiResponse<ChatResponse>,
+    Error,
+    { query: string; limit?: number; graphDepth?: number }
+  >({
+    mutationFn: async (params) => {
+      const response = await api.post<ApiResponse<ChatResponse>>(
+        '/search/chat',
+        params
+      );
+      return response.data;
+    },
+  });
+
   return {
     searchSemantic: semanticMutation.mutateAsync,
     isSearchingSemantic: semanticMutation.isPending,
@@ -51,5 +81,10 @@ export const useSearch = () => {
     isSearchingStructured: structuredMutation.isPending,
     structuredError: structuredMutation.error,
     structuredResults: structuredMutation.data?.data || [],
+
+    chatSearch: chatMutation.mutateAsync,
+    isSearchingChat: chatMutation.isPending,
+    chatError: chatMutation.error,
+    chatResponse: chatMutation.data?.data || null,
   };
 };

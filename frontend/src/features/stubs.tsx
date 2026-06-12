@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useReports } from '../hooks/useReports';
-import { api } from '../lib/api';
 import { useProfiles } from '../hooks/useProfiles';
 import { useGraph } from '../hooks/useGraph';
 import { useQueue } from '../hooks/useQueue';
@@ -1684,6 +1683,9 @@ export const GraphExplorerPage: React.FC = () => {
   const [nameInput, setNameInput] = useState('');
   const [dateInput, setDateInput] = useState('');
   const [crimeInput, setCrimeInput] = useState('');
+  const [startDateInput, setStartDateInput] = useState('');
+  const [endDateInput, setEndDateInput] = useState('');
+  const [minWeightInput, setMinWeightInput] = useState('0');
   const [selectedNode, setSelectedNode] = useState<any>(null);
   const [associates, setAssociates] = useState<any[]>([]);
   const [isFetchingAssociates, setIsFetchingAssociates] = useState(false);
@@ -1710,20 +1712,30 @@ export const GraphExplorerPage: React.FC = () => {
     queryGraph({ queryType: 'all' }).catch(() => {});
   }, []);
 
+  const buildTemporalParams = () => {
+    const minWeight = Number(minWeightInput || '0');
+    return {
+      startDate: startDateInput.trim() || undefined,
+      endDate: endDateInput.trim() || undefined,
+      minWeight: Number.isFinite(minWeight) && minWeight > 0 ? minWeight : undefined,
+    };
+  };
+
   const handleQuery = async (e: React.FormEvent) => {
     e.preventDefault();
+    const temporalParams = buildTemporalParams();
     try {
       if (queryMode === 'all') {
-        await queryGraph({ queryType: 'all' });
+        await queryGraph({ queryType: 'all', ...temporalParams });
       } else if (queryMode === 'node') {
         if (!nameInput.trim()) { addToast('Enter a suspect name to query.', 'warning'); return; }
-        await queryGraph({ queryType: 'node', centerNodeId: nameInput.trim() });
+        await queryGraph({ queryType: 'node', centerNodeId: nameInput.trim(), ...temporalParams });
       } else if (queryMode === 'date') {
         if (!dateInput.trim()) { addToast('Enter a date in DD.MM.YYYY format.', 'warning'); return; }
-        await queryGraph({ queryType: 'date', date: dateInput.trim() });
+        await queryGraph({ queryType: 'date', date: dateInput.trim(), ...temporalParams });
       } else if (queryMode === 'crime') {
         if (!crimeInput.trim()) { addToast('Enter a crime keyword.', 'warning'); return; }
-        await queryGraph({ queryType: 'crime', crimeKeyword: crimeInput.trim() });
+        await queryGraph({ queryType: 'crime', crimeKeyword: crimeInput.trim(), ...temporalParams });
       }
       setSelectedNode(null);
       setAssociates([]);
@@ -1747,8 +1759,9 @@ export const GraphExplorerPage: React.FC = () => {
   };
 
   const handleNodeDblClick = async (node: any) => {
+    const temporalParams = buildTemporalParams();
     try {
-      await queryGraph({ queryType: 'node', centerNodeId: node.id, depth: 2 });
+      await queryGraph({ queryType: 'node', centerNodeId: node.id, depth: 2, ...temporalParams });
       setSelectedNode(node);
     } catch (e: any) {
       addToast(`Subgraph query failed: ${e.message}`, 'error');
@@ -1761,7 +1774,7 @@ export const GraphExplorerPage: React.FC = () => {
       const response = await cleanGraph();
       if (response.success) {
         addToast(`Removed ${response.data.removedCount} invalid nodes.`, 'success');
-        await queryGraph({ queryType: 'all' });
+        await queryGraph({ queryType: 'all', ...buildTemporalParams() });
       }
     } catch (e: any) {
       addToast(`Failed: ${e.message}`, 'error');
@@ -1865,6 +1878,21 @@ export const GraphExplorerPage: React.FC = () => {
             </div>
           )}
 
+          <div className="min-w-[160px] space-y-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Window Start</label>
+            <Input value={startDateInput} onChange={e => setStartDateInput(e.target.value)} placeholder="2026-06-01" className="bg-slate-50 border-slate-200 text-sm" />
+          </div>
+
+          <div className="min-w-[160px] space-y-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Window End</label>
+            <Input value={endDateInput} onChange={e => setEndDateInput(e.target.value)} placeholder="2026-06-12" className="bg-slate-50 border-slate-200 text-sm" />
+          </div>
+
+          <div className="min-w-[120px] space-y-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Min Weight</label>
+            <Input value={minWeightInput} onChange={e => setMinWeightInput(e.target.value)} placeholder="0.25" className="bg-slate-50 border-slate-200 text-sm" />
+          </div>
+
           <Button
             type="submit"
             variant="primary"
@@ -1908,6 +1936,7 @@ export const GraphExplorerPage: React.FC = () => {
             <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 pb-2">Visible Graph</h3>
             <div className="flex justify-between"><span className="text-slate-500">Nodes shown</span><span className="font-bold font-mono text-slate-800">{nodes.length}</span></div>
             <div className="flex justify-between"><span className="text-slate-500">Edges shown</span><span className="font-bold font-mono text-slate-800">{edges.length}</span></div>
+            <div className="flex justify-between gap-3"><span className="text-slate-500">Temporal window</span><span className="font-bold text-right text-slate-800">{startDateInput || 'any'} to {endDateInput || 'now'}</span></div>
           </div>
         </div>
 
@@ -1962,12 +1991,14 @@ export const GraphExplorerPage: React.FC = () => {
                 const label = String(edge.type || '').replace(/_/g, ' ');
                 const labelLayout = edgeLabelLayouts.get(edgeKey);
                 const showLabel = Boolean(labelLayout && !labelLayout.hidden);
+                const strokeWidth = Math.max(1, Math.min(3.6, Number(edge.weight || 0) * 1.6));
+                const edgeOpacity = Math.max(0.18, Math.min(0.65, Number(edge.weight || 0) * 0.22));
                 return (
                   <g key={edgeKey}>
                     <line
                       x1={src.x} y1={src.y} x2={tgt.x} y2={tgt.y}
-                      stroke="rgba(34,211,238,0.18)"
-                      strokeWidth={1.2}
+                      stroke={`rgba(34,211,238,${edgeOpacity})`}
+                      strokeWidth={strokeWidth}
                       markerEnd="url(#arrowhead)"
                     />
                     {showLabel && (
@@ -2110,7 +2141,7 @@ export const GraphExplorerPage: React.FC = () => {
                     <div className="min-w-0">
                       <span className="font-bold text-slate-800 block truncate">{item.name}</span>
                       <span className="text-[10px] text-slate-400 font-semibold uppercase">
-                        {item.hasEdge ? 'Direct Tie' : 'Predicted (GNN)'}
+                        {item.hasEdge ? `Direct Tie${item.relationshipHint ? ` · ${item.relationshipHint}` : ''}` : 'Predicted (GNN)'}
                       </span>
                     </div>
                     <Badge variant={item.similarity > 0.75 ? 'red' : 'blue'}>
@@ -2130,11 +2161,21 @@ export const GraphExplorerPage: React.FC = () => {
 // --- Unified Search Page ---
 export const SearchPage: React.FC = () => {
   const [query, setQuery] = useState('');
-  const { searchSemantic, isSearchingSemantic, semanticResults, searchStructured, isSearchingStructured, structuredResults } = useSearch();
-  const [activeTab, setActiveTab] = useState<'semantic' | 'structured'>('semantic');
+  const {
+    searchSemantic,
+    isSearchingSemantic,
+    semanticResults,
+    searchStructured,
+    isSearchingStructured,
+    structuredResults,
+    chatSearch,
+    isSearchingChat,
+    chatResponse,
+  } = useSearch();
+  const [activeTab, setActiveTab] = useState<'semantic' | 'structured' | 'chat'>('semantic');
   const { addToast } = useUiStore();
 
-  const handleSearch = async (type: 'semantic' | 'structured') => {
+  const handleSearch = async (type: 'semantic' | 'structured' | 'chat') => {
     if (!query.trim()) {
       addToast('Please input a search query first', 'warning');
       return;
@@ -2143,8 +2184,10 @@ export const SearchPage: React.FC = () => {
     try {
       if (type === 'semantic') {
         await searchSemantic({ query });
-      } else {
+      } else if (type === 'structured') {
         await searchStructured({ query });
+      } else {
+        await chatSearch({ query, limit: 5, graphDepth: 2 });
       }
     } catch (e: any) {
       addToast(`Search failed: ${e.message}`, 'error');
@@ -2152,7 +2195,12 @@ export const SearchPage: React.FC = () => {
   };
 
   const results = activeTab === 'semantic' ? semanticResults : structuredResults;
-  const isLoading = activeTab === 'semantic' ? isSearchingSemantic : isSearchingStructured;
+  const isLoading =
+    activeTab === 'semantic'
+      ? isSearchingSemantic
+      : activeTab === 'structured'
+        ? isSearchingStructured
+        : isSearchingChat;
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -2187,6 +2235,14 @@ export const SearchPage: React.FC = () => {
           >
             <Database size={16} /> Relational SQL Search
           </Button>
+          <Button
+            onClick={() => handleSearch('chat')}
+            disabled={isLoading}
+            variant="outline"
+            className="border-slate-200 hover:bg-slate-50 font-semibold flex items-center gap-1.5 rounded-xl px-4 py-2"
+          >
+            <Cpu size={16} /> Intelligence Chat
+          </Button>
         </div>
       </div>
 
@@ -2195,6 +2251,96 @@ export const SearchPage: React.FC = () => {
           <RefreshCw size={24} className="animate-spin text-cyan-600 mb-2" />
           <span className="text-xs font-semibold">Running database query index...</span>
         </div>
+      ) : activeTab === 'chat' ? (
+        !chatResponse ? (
+          query && (
+            <div className="bg-white border border-slate-100 p-12 rounded-2xl shadow-sm text-center space-y-2">
+              <ShieldAlert size={28} className="text-slate-300 mx-auto" />
+              <h3 className="text-sm font-bold text-slate-700">No Chat Response Yet</h3>
+              <p className="text-xs text-slate-500">Run Intelligence Chat to assemble grounded evidence from vector search, SQL records, and the graph.</p>
+            </div>
+          )
+        ) : (
+          <div className="space-y-4">
+            <div className="border-l-4 border-cyan-500 pl-3">
+              <h2 className="text-sm font-bold text-slate-700 uppercase tracking-widest">
+                Intelligence Chat Response
+              </h2>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 space-y-5">
+              <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                <Badge variant={chatResponse.usedFallback ? 'amber' : 'green'}>
+                  {chatResponse.usedFallback ? 'fallback mode' : 'ollama grounded'}
+                </Badge>
+                <span>{chatResponse.model || 'No local model detected'}</span>
+              </div>
+
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+                <p className="text-sm text-slate-700 leading-7 whitespace-pre-line">
+                  {chatResponse.answer}
+                </p>
+              </div>
+
+              {chatResponse.graphSummary && (
+                <div className="rounded-xl border border-cyan-100 bg-cyan-50/40 p-4 space-y-1">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-cyan-700">Graph Context</p>
+                  <p className="text-xs text-slate-700 leading-6">{chatResponse.graphSummary}</p>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <h3 className="text-xs font-bold text-slate-700 uppercase tracking-widest">Source Citations</h3>
+                {chatResponse.citations.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic">No supporting citations were returned.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {chatResponse.citations.map((citation, idx) => (
+                      <div key={`${citation.entityType}-${citation.id}-${idx}`} className="rounded-xl border border-slate-100 bg-white p-4 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <Badge
+                              variant={
+                                citation.entityType === 'profile' ? 'red' :
+                                citation.entityType === 'report_item' ? 'blue' : 'gray'
+                              }
+                            >
+                              S{idx + 1}
+                            </Badge>
+                            <span className="text-xs font-bold text-slate-800">{citation.title}</span>
+                          </div>
+                          {citation.score !== undefined && citation.score !== null && (
+                            <span className="text-[10px] font-mono font-bold text-cyan-600">
+                              {(citation.score * 100).toFixed(1)}%
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-600 leading-6">{citation.snippet}</p>
+                        <div className="pt-1">
+                          {citation.entityType === 'profile' ? (
+                            <Link
+                              to={`/profiles/${citation.id}`}
+                              className="px-2.5 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg inline-flex items-center gap-1 font-semibold"
+                            >
+                              <Eye size={12} /> Open Dossier
+                            </Link>
+                          ) : (
+                            <Link
+                              to={`/reports/${citation.id}`}
+                              className="px-2.5 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg inline-flex items-center gap-1 font-semibold"
+                            >
+                              <Eye size={12} /> Open Report
+                            </Link>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )
       ) : results.length === 0 ? (
         query && (
           <div className="bg-white border border-slate-100 p-12 rounded-2xl shadow-sm text-center space-y-2">

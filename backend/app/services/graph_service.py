@@ -1,7 +1,7 @@
 import app.core.paths  # Configures Python path for importing existing modules
 from typing import Dict, List, Any, Optional
-import numpy as np
-
+from datetime import datetime, date
+import math
 from graph_db import GraphDatabase, GNNModelManager
 from app.config import settings
 
@@ -60,11 +60,14 @@ class GraphService:
         
         # Map output to frontend GnnRecommendation schema
         recommendations = []
-        for name, similarity, has_edge in raw_recs:
+        for recommendation in raw_recs:
+            name, similarity, has_edge = recommendation[:3]
+            relationship_hint = recommendation[3] if len(recommendation) > 3 else ""
             recommendations.append({
                 "name": name,
                 "similarity": float(similarity),
-                "hasEdge": bool(has_edge)
+                "hasEdge": bool(has_edge),
+                "relationshipHint": relationship_hint,
             })
         return recommendations
 
@@ -75,6 +78,9 @@ class GraphService:
         query_type: str = "node",
         date: Optional[str] = None,
         crime_keyword: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        min_weight: float = 0.0,
     ) -> Dict[str, Any]:
         """Query Neo4j graph with multiple strategies:
         - query_type='all'    → return a sample of all nodes
@@ -91,7 +97,8 @@ class GraphService:
             edges_data = self.db._run(
                 "MATCH (a)-[r]-(b) WHERE elementId(a) < elementId(b) RETURN a, type(r) AS rel_type, properties(r) AS props, b LIMIT 200"
             )
-            return self._build_graph(nodes_data, edges_data)
+            graph = self._build_graph(nodes_data, edges_data)
+            return self._apply_temporal_filters(graph, start_date, end_date, min_weight)
 
         # ── Mode: DATE ─────────────────────────────────────────────────────────
         if query_type == "date":
@@ -122,7 +129,8 @@ class GraphService:
                 """,
                 date=date,
             )
-            return self._build_graph(nodes_data, edges_data)
+            graph = self._build_graph(nodes_data, edges_data)
+            return self._apply_temporal_filters(graph, start_date or date, end_date or date, min_weight)
 
         # ── Mode: CRIME keyword ────────────────────────────────────────────────
         if query_type == "crime":
@@ -155,7 +163,8 @@ class GraphService:
                 """,
                 kw=keyword,
             )
-            return self._build_graph(nodes_data, edges_data)
+            graph = self._build_graph(nodes_data, edges_data)
+            return self._apply_temporal_filters(graph, start_date, end_date, min_weight)
 
         # ── Mode: NODE — resolve name → node_id if needed ──────────────────────
         # If the user typed a display name (e.g. "John Smith") rather than a
@@ -241,8 +250,14 @@ class GraphService:
                             "target": tgt,
                             "type": rel_type,
                             "weight": float(props.get("weight", 1.0)),
+                            "rawWeight": float(props.get("base_weight") or props.get("weight", 1.0)),
+                            "firstSeen": props.get("first_seen"),
+                            "lastSeen": props.get("last_seen"),
+                            "occurrenceCount": int(props.get("occurrence_count") or 1),
+                            "decayHalfLifeDays": float(props.get("decay_half_life_days") or 60.0),
                         })
-            return {"nodes": nodes, "edges": edges}
+            graph = {"nodes": nodes, "edges": edges}
+            return self._apply_temporal_filters(graph, start_date, end_date, min_weight, center_node_id=center_node_id)
 
         # ── Mode: NODE (person name / generic node_id) ─────────────────────────
         query = f"""
@@ -252,7 +267,12 @@ class GraphService:
                    source: startNode(rel).node_id,
                    target: endNode(rel).node_id,
                    type: type(rel),
-                   weight: rel.weight
+                   weight: rel.weight,
+                   rawWeight: rel.base_weight,
+                   firstSeen: rel.first_seen,
+                   lastSeen: rel.last_seen,
+                   occurrenceCount: rel.occurrence_count,
+                   decayHalfLifeDays: rel.decay_half_life_days
                }}] AS path_rels
         LIMIT 200
         """
@@ -284,12 +304,18 @@ class GraphService:
                             "target": target_id,
                             "type": rel_type,
                             "weight": float(rel.get("weight") or 1.0),
+                            "rawWeight": float(rel.get("rawWeight") or rel.get("weight") or 1.0),
+                            "firstSeen": rel.get("firstSeen"),
+                            "lastSeen": rel.get("lastSeen"),
+                            "occurrenceCount": int(rel.get("occurrenceCount") or 1),
+                            "decayHalfLifeDays": float(rel.get("decayHalfLifeDays") or 60.0),
                         }
 
-        return {
+        graph = {
             "nodes": list(unique_nodes.values()),
             "edges": list(unique_edges.values()),
         }
+        return self._apply_temporal_filters(graph, start_date, end_date, min_weight, center_node_id=center_node_id)
 
     def _build_graph(
         self,
@@ -332,8 +358,78 @@ class GraphService:
                         "target": bid,
                         "type": rel_type,
                         "weight": float(props.get("weight", 1.0)),
+                        "rawWeight": float(props.get("base_weight") or props.get("weight", 1.0)),
+                        "firstSeen": props.get("first_seen"),
+                        "lastSeen": props.get("last_seen"),
+                        "occurrenceCount": int(props.get("occurrence_count") or 1),
+                        "decayHalfLifeDays": float(props.get("decay_half_life_days") or 60.0),
                     })
         return {"nodes": nodes, "edges": edges}
+
+    def _apply_temporal_filters(
+        self,
+        graph: Dict[str, Any],
+        start_date: Optional[str],
+        end_date: Optional[str],
+        min_weight: float,
+        center_node_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not graph.get("edges"):
+            return graph
+
+        start_dt = self._parse_date(start_date)
+        end_dt = self._parse_date(end_date)
+        reference_dt = end_dt or date.today()
+        filters_enabled = bool(start_dt or end_dt or min_weight > 0)
+        filtered_edges: List[Dict[str, Any]] = []
+
+        for edge in graph["edges"]:
+            first_seen_dt = self._parse_date(edge.get("firstSeen"))
+            last_seen_dt = self._parse_date(edge.get("lastSeen"))
+            active_weight = self._decayed_weight(edge, reference_dt)
+            edge["weight"] = active_weight
+
+            overlaps = True
+            if start_dt and last_seen_dt and last_seen_dt < start_dt:
+                overlaps = False
+            if end_dt and first_seen_dt and first_seen_dt > end_dt:
+                overlaps = False
+            if min_weight > 0 and active_weight < min_weight:
+                overlaps = False
+
+            if not filters_enabled or overlaps:
+                filtered_edges.append(edge)
+
+        if not filters_enabled:
+            return graph
+
+        keep_node_ids = {edge["source"] for edge in filtered_edges} | {edge["target"] for edge in filtered_edges}
+        if center_node_id:
+            keep_node_ids.add(center_node_id)
+
+        filtered_nodes = [node for node in graph.get("nodes", []) if node.get("id") in keep_node_ids]
+        return {"nodes": filtered_nodes, "edges": filtered_edges}
+
+    def _decayed_weight(self, edge: Dict[str, Any], reference_dt: date) -> float:
+        last_seen = self._parse_date(edge.get("lastSeen"))
+        base_weight = float(edge.get("weight") or 0.0)
+        half_life = max(float(edge.get("decayHalfLifeDays") or 60.0), 1.0)
+        if not last_seen:
+            return base_weight
+        elapsed_days = max((reference_dt - last_seen).days, 0)
+        lambda_decay = math.log(2.0) / half_life
+        return round(base_weight * math.exp(-lambda_decay * elapsed_days), 4)
+
+    def _parse_date(self, value: Optional[str]):
+        if not value:
+            return None
+        text = str(value).strip()
+        for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d-%m-%Y"):
+            try:
+                return datetime.strptime(text, fmt).date()
+            except ValueError:
+                continue
+        return None
 
     def _format_node(self, node: Any) -> Dict[str, Any]:
         """Convert a Neo4j node object into frontend representation."""

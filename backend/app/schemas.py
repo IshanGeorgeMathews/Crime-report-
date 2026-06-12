@@ -221,6 +221,15 @@ class SearchRequest(BaseModel):
     district: Optional[str] = None
     limit: Optional[int] = 10
 
+
+class ChatSearchRequest(BaseModel):
+    query: str
+    limit: Optional[int] = 5
+    graphDepth: Optional[int] = Field(1, alias="graph_depth")
+
+    class Config:
+        populate_by_name = True
+
 class SearchResultResponse(BaseModel):
     entityType: str = Field(..., alias="entity_type")  # 'profile' or 'report_item'
     title: str
@@ -231,6 +240,29 @@ class SearchResultResponse(BaseModel):
     class Config:
         populate_by_name = True
         from_attributes = True
+
+
+class ChatCitationResponse(BaseModel):
+    entityType: str = Field(..., alias="entity_type")
+    title: str
+    snippet: str
+    id: str
+    score: Optional[float] = None
+
+    class Config:
+        populate_by_name = True
+        from_attributes = True
+
+
+class ChatSearchResponse(BaseModel):
+    answer: str
+    citations: List[ChatCitationResponse] = []
+    graphSummary: Optional[str] = Field(None, alias="graph_summary")
+    usedFallback: bool = Field(False, alias="used_fallback")
+    model: Optional[str] = None
+
+    class Config:
+        populate_by_name = True
 
 # --- Graph Schemas ---
 class GraphNodeResponse(BaseModel):

@@ -528,6 +528,41 @@ if (VITE_USE_MOCK) {
       return Promise.reject({ config, mockResponse: mockResponse(results) });
     }
 
+    if (url.includes('/search/chat') && method === 'post') {
+      const data = {
+        answer:
+          'Retrieved evidence points to sustained extremist-linked protest coordination around Arippa and Nilambur, with Chittoor Kutty emerging as a recurring actor across retrieved profile and report material [S1][S2]. The linked graph context also shows overlap with Hashim Cherian Abraham and the organization RPI (RL) Blue Star, suggesting the activity is not isolated and should be treated as part of a wider associate network [S3].',
+        citations: [
+          {
+            entityType: 'profile',
+            title: 'Chittoor Kutty (PP/040/PKD)',
+            snippet: 'Active Maoist cadre associated with RPI (RL) Blue Star. Linked to land encroachment agitation at Arippa since 2013.',
+            id: 'prof-1',
+            score: 0.91,
+          },
+          {
+            entityType: 'report_item',
+            title: 'Report Item (event) - 04.06.2026',
+            snippet: 'Staged illegal road block and burned public bus near Arippa town. Charging sections of UAPA and allied public order laws.',
+            id: 'rep-1',
+            score: 0.84,
+          },
+          {
+            entityType: 'profile',
+            title: 'Hashim Cherian Abraham (PP/PENDING)',
+            snippet: 'Left Wing Extremism-linked profile with address references to Arippa and Thenmala jurisdiction.',
+            id: 'prof-3',
+            score: 0.77,
+          }
+        ],
+        graphSummary:
+          'Graph context includes 9 nodes and 11 relationships. Individuals: Chittoor Kutty, Hashim Cherian. Organizations: RPI (RL) Blue Star. Relationship mix: ASSOCIATED_WITH=4, MEMBER_OF=2, CO_OCCURRED_WITH=1.',
+        usedFallback: false,
+        model: 'qwen:8b',
+      };
+      return Promise.reject({ config, mockResponse: mockResponse(data) });
+    }
+
     // --- Mock Admin User Routes ---
     if (url === '/admin/users' && method === 'get') {
       const users = [

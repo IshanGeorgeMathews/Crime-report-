@@ -11,6 +11,9 @@ export interface GraphQueryParams {
   date?: string;       // DD.MM.YYYY
   crimeKeyword?: string;
   depth?: number;
+  startDate?: string;
+  endDate?: string;
+  minWeight?: number;
 }
 
 export const useGraph = () => {
@@ -26,6 +29,9 @@ export const useGraph = () => {
       if (params.centerNodeId) searchParams.centerNodeId = params.centerNodeId;
       if (params.date) searchParams.date = params.date;
       if (params.crimeKeyword) searchParams.crimeKeyword = params.crimeKeyword;
+      if (params.startDate) searchParams.startDate = params.startDate;
+      if (params.endDate) searchParams.endDate = params.endDate;
+      if (params.minWeight !== undefined) searchParams.minWeight = String(params.minWeight);
 
       const response = await api.get<ApiResponse<GraphData>>('/graph/query', {
         params: searchParams,
@@ -41,15 +47,6 @@ export const useGraph = () => {
       const response = await api.get<ApiResponse<any>>('/graph/stats');
       return response.data;
     },
-  });
-
-  // Query GNN hidden associate suggestions
-  const associatesQuery = useQuery<ApiResponse<GnnRecommendation[]>, Error>({
-    queryKey: ['graph', 'associates', ''],
-    queryFn: async () => {
-      return { success: true, data: [] };
-    },
-    enabled: false,
   });
 
   const fetchAssociates = async (personName: string) => {

@@ -12,6 +12,30 @@ from script_segmenter import segment_by_script
 # Singular-only matching patterns for name suffixes
 KUTTY_SUFFIX_RE = re.compile(r"^കുട്ടി(യെ|യുടെ|ക്ക്|യോട്|യിൽ|യാൽ)?$")
 PILLAI_SUFFIX_RE = re.compile(r"^പിള്ള(യെ|യുടെ|യ്ക്ക്|യോട്|യിൽ|യാൽ)?$")
+BHAI_SUFFIX_RE = re.compile(r"^(ഭായ്|ഭായി)(യെ|യുടെ|ക്ക്|യോട്|യിൽ|യാൽ)?$")
+SETT_SUFFIX_RE = re.compile(r"^സേഠ്(നെ|ന്റെ|ിന്|നോട്|ിനെ|ിൽ)?$")
+CHETTAN_SUFFIX_RE = re.compile(r"^ചേട്ടൻ(നെ|ന്റെ|ോട്|െ|്|ിൽ)?$")
+IKKA_SUFFIX_RE = re.compile(r"^ഇക്ക(യെ|യുടെ|യ്ക്ക്|യോട്|യിൽ|യാൽ)?$")
+ANNAN_SUFFIX_RE = re.compile(r"^അണ്ണൻ(നെ|ന്റെ|ോട്|െ|്|ിൽ)?$")
+
+PLACE_PREFIX_MAP = {
+    "കരിപ്പൂർ": "Karippur",
+    "വാളയാർ": "Valayar",
+    "ആരിപ്പ": "Arippa",
+    "മേപ്പാടി": "Meppadi",
+    "ചിറ്റൂർ": "Chittoor",
+    "വയനാട്": "Wayanad",
+    "കോഴിക്കോട്": "Kozhikode",
+    "കണ്ണൂർ": "Kannur",
+    "നിലമ്പൂർ": "Nilambur",
+    "ആലപ്പുഴ": "Alappuzha",
+    "കോട്ടയം": "Kottayam",
+    "ഇടുക്കി": "Idukki",
+    "പാലക്കാട്": "Palakkad",
+    "തൃശ്ശൂർ": "Thrissur",
+    "മലപ്പുറം": "Malappuram",
+    "എറണാകുളം": "Ernakulam"
+}
 
 # Matches relative adjectival participles (verbs that end in typical Malayalam adjectival terminations)
 MALAYALAM_PARTICIPLE_PATTERN = re.compile(
@@ -60,9 +84,9 @@ def load_exclusions() -> set:
 def anchor_malayalam_suffixes(text: str) -> str:
     """Pre-translation suffix anchoring algorithm (PTSR Pass 1).
     
-    Checks singular inflected forms of 'കുട്ടി' and 'പിള്ള'. Applies
-    backward-scanning context evaluation. If the suffix is preceded by
-    adjectives, relative participles, or boundaries, it is NOT anchored.
+    Checks singular inflected forms of 'കുട്ടി', 'പിള്ള', and regional suffixes like
+    'ഭായ്', 'സേഠ്', 'ചേട്ടൻ', 'ഇക്ക', 'അണ്ണൻ', as well as place name prefixes.
+    Applies scanning context evaluation to avoid false positives.
     """
     if not text:
         return text
@@ -78,14 +102,53 @@ def anchor_malayalam_suffixes(text: str) -> str:
     new_tokens = list(tokens)
     
     for i, token in enumerate(tokens):
-        # 1. Match name suffixes
+        # 1. Match place prefix first
+        if token in PLACE_PREFIX_MAP:
+            anchor_place = True
+            following_word = ""
+            for j in range(i + 1, len(tokens)):
+                next_token = tokens[j]
+                if next_token.isspace() and next_token != "\n" and len(next_token) <= 2:
+                    continue
+                is_boundary = next_token == "\n" or any(unicodedata.category(c)[0] in ("P", "S", "Z", "C") for c in next_token)
+                if is_boundary:
+                    anchor_place = False
+                    break
+                if re.match(r"^[\u0D00-\u0D7F]+$", next_token):
+                    following_word = next_token
+                    break
+                else:
+                    anchor_place = False
+                    break
+            
+            if not following_word:
+                anchor_place = False
+                
+            if anchor_place:
+                if following_word in exclusions:
+                    anchor_place = False
+                elif following_word.isdigit():
+                    anchor_place = False
+                elif MALAYALAM_PARTICIPLE_PATTERN.match(following_word):
+                    anchor_place = False
+                    
+            if anchor_place:
+                new_tokens[i] = PLACE_PREFIX_MAP[token]
+                continue
+
+        # 2. Match name suffixes
         is_kutty = KUTTY_SUFFIX_RE.match(token)
         is_pillai = PILLAI_SUFFIX_RE.match(token)
+        is_bhai = BHAI_SUFFIX_RE.match(token)
+        is_sett = SETT_SUFFIX_RE.match(token)
+        is_chettan = CHETTAN_SUFFIX_RE.match(token)
+        is_ikka = IKKA_SUFFIX_RE.match(token)
+        is_annan = ANNAN_SUFFIX_RE.match(token)
         
-        if not (is_kutty or is_pillai):
+        if not (is_kutty or is_pillai or is_bhai or is_sett or is_chettan or is_ikka or is_annan):
             continue
             
-        # 2. Backward scan to find the immediate preceding Malayalam word run
+        # 3. Backward scan to find the immediate preceding Malayalam word run
         anchor = True
         preceding_word = ""
         
@@ -111,7 +174,7 @@ def anchor_malayalam_suffixes(text: str) -> str:
                 anchor = False
                 break
         
-        # 3. Apply validation gates
+        # 4. Apply validation gates
         if not preceding_word:
             anchor = False
             
@@ -126,9 +189,22 @@ def anchor_malayalam_suffixes(text: str) -> str:
             elif MALAYALAM_PARTICIPLE_PATTERN.match(preceding_word):
                 anchor = False
                 
-        # 4. Perform substitution if anchored
+        # 5. Perform substitution if anchored
         if anchor:
-            replacement = "Kutty" if is_kutty else "Pillai"
+            if is_kutty:
+                replacement = "Kutty"
+            elif is_pillai:
+                replacement = "Pillai"
+            elif is_bhai:
+                replacement = "Bhai"
+            elif is_sett:
+                replacement = "Sett"
+            elif is_chettan:
+                replacement = "Chettan"
+            elif is_ikka:
+                replacement = "Ikka"
+            elif is_annan:
+                replacement = "Annan"
             new_tokens[i] = replacement
 
     return "".join(new_tokens)

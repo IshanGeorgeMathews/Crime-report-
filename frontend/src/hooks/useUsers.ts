@@ -13,6 +13,14 @@ export interface UserListItem {
   createdAt: string;
 }
 
+export interface CreateUserPayload {
+  username: string;
+  password: string;
+  fullName: string;
+  role: UserListItem['role'];
+  district?: string;
+}
+
 export const useUsers = () => {
   const queryClient = useQueryClient();
 
@@ -29,7 +37,7 @@ export const useUsers = () => {
   const createUserMutation = useMutation<
     ApiResponse<UserListItem>,
     Error,
-    Omit<UserListItem, 'id' | 'is_active' | 'created_at'> & { password: string }
+    CreateUserPayload
   >({
     mutationFn: async (newUser) => {
       const response = await api.post<ApiResponse<UserListItem>>('/admin/users', newUser);

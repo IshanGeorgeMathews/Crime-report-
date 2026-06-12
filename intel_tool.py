@@ -707,7 +707,7 @@ def _sync_profiles_from_texts(texts: list, report_date: str, use_ollama: bool):
         if tag:
             district = tag.strip("()")
         cri_id = db.add_crime(crime_id, text, district=district, date_str=report_date)
-        db.add_relation(cri_id, rec_id, "REPORTED_IN")
+        db.add_relation(cri_id, rec_id, "REPORTED_IN", report_date=report_date)
 
         # Map each extracted name to a node ID in the graph
         ind_node_ids = []
@@ -860,9 +860,9 @@ def _sync_profiles_from_texts(texts: list, report_date: str, use_ollama: bool):
             if ind_id:
                 ind_node_ids.append(ind_id)
                 # Add edge: Individual -> MENTIONED_IN -> Record
-                db.add_relation(ind_id, rec_id, "MENTIONED_IN")
+                db.add_relation(ind_id, rec_id, "MENTIONED_IN", report_date=report_date)
                 # Add edge: Individual -> ASSOCIATED_WITH -> Crime
-                db.add_relation(ind_id, cri_id, "ASSOCIATED_WITH")
+                db.add_relation(ind_id, cri_id, "ASSOCIATED_WITH", report_date=report_date)
                 
                 # Add MEMBER_OF edge if organization involvement is present
                 if structured_data:
@@ -877,7 +877,7 @@ def _sync_profiles_from_texts(texts: list, report_date: str, use_ollama: bool):
                     if org_name:
                         org_id = db.add_organization(org_name, org_remarks)
                         if org_id:
-                            db.add_relation(ind_id, org_id, "MEMBER_OF")
+                            db.add_relation(ind_id, org_id, "MEMBER_OF", report_date=report_date)
 
                 # Add ACCUSED_IN edge if case details are present
                 if structured_data:
@@ -899,12 +899,12 @@ def _sync_profiles_from_texts(texts: list, report_date: str, use_ollama: bool):
                     if case_id:
                         case_node_id = db.add_case(case_id, fir=fir, sections=sections, ps=ps, brief=brief)
                         if case_node_id:
-                            db.add_relation(ind_id, case_node_id, "ACCUSED_IN")
+                            db.add_relation(ind_id, case_node_id, "ACCUSED_IN", report_date=report_date)
 
         # Add co-occurrence edges between all individuals in the same event paragraph
         for i in range(len(ind_node_ids)):
             for j in range(i + 1, len(ind_node_ids)):
-                db.add_relation(ind_node_ids[i], ind_node_ids[j], "CO_OCCURRED_WITH")
+                db.add_relation(ind_node_ids[i], ind_node_ids[j], "CO_OCCURRED_WITH", report_date=report_date)
 
     # Apply Cross-Paragraph High-Frequency Edge Guards
     for name in new_names_in_run:

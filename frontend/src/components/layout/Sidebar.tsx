@@ -7,16 +7,9 @@ import {
   FilePlus,
   Cpu,
   ClipboardCheck,
-  FolderOpen,
   UserRound,
-  Network,
-  Scale,
   Orbit,
   Search,
-  CalendarClock,
-  Users,
-  FileSpreadsheet,
-  Activity,
   LogOut,
   ChevronLeft,
   ChevronRight,
@@ -42,6 +35,7 @@ export const Sidebar: React.FC = () => {
 
   // Helper to check if role is allowed
   const hasAccess = (allowed: typeof userRole[]) => {
+    void allowed;
     return true; // Bypass role restriction for simplicity
   };
 

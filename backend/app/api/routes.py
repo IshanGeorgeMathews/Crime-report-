@@ -23,6 +23,7 @@ from app.schemas import (
     UserCreate, UserUpdate, UserListItem,
     JobResponse, ReportResponse, ReportDetailResponse, ReportItemResponse,
     ProfileResponse, ProfileDetailResponse, SearchRequest, SearchResultResponse,
+    ChatSearchRequest,
     GraphQueryResponse, GraphNodeResponse, GraphEdgeResponse, GnnRecommendationResponse,
     ApiResponse
 )
@@ -31,6 +32,7 @@ from app.services.profile_service import ProfileService
 from app.services.graph_service import GraphService
 from app.services.qdrant_service import QdrantService
 from app.services.ner_service import NERService
+from app.services.rag_service import RAGService
 from utils import build_daily_report, build_less_priority_report
 
 router = APIRouter()
@@ -39,6 +41,7 @@ profile_service = ProfileService()
 graph_service = GraphService()
 qdrant_service = QdrantService()
 ner_service = NERService()
+rag_service = RAGService()
 
 # --- Auth Endpoints ---
 
@@ -732,6 +735,9 @@ async def query_subgraph(
     queryType: str = "node",
     date: Optional[str] = None,
     crimeKeyword: Optional[str] = None,
+    startDate: Optional[str] = None,
+    endDate: Optional[str] = None,
+    minWeight: float = 0.0,
     current_user: User = Depends(require_viewer)
 ):
     """Query sub-graph. queryType: 'all' | 'node' | 'date' | 'crime'."""
@@ -741,6 +747,9 @@ async def query_subgraph(
         query_type=queryType,
         date=date,
         crime_keyword=crimeKeyword,
+        start_date=startDate,
+        end_date=endDate,
+        min_weight=minWeight,
     )
     return {"success": True, "data": res}
 
@@ -916,3 +925,19 @@ async def search_structured(search_req: SearchRequest, db: AsyncSession = Depend
     limit = max(1, min(search_req.limit or 10, 25))
     results = await _search_profiles_and_items(db, search_req.query, limit)
     return {"success": True, "data": results}
+
+
+@router.post("/search/chat")
+async def search_chat(
+    search_req: ChatSearchRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_viewer),
+):
+    """Conversational intelligence search using grounded vector, SQL, and graph context."""
+    result = await rag_service.chat(
+        db=db,
+        query=search_req.query,
+        limit=search_req.limit or 5,
+        graph_depth=search_req.graphDepth or 1,
+    )
+    return {"success": True, "data": result}

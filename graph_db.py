@@ -17,7 +17,8 @@ Neo4j connection: bolt://127.0.0.1:7687  database: prosecutorreport
 
 import os
 import json
-from datetime import datetime
+import math
+from datetime import datetime, date
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 
@@ -34,7 +35,7 @@ from neo4j import GraphDatabase as Neo4jDriver
 # ---------------------------------------------------------------------------
 # Import Name-validation helper from utils
 # ---------------------------------------------------------------------------
-from utils import _is_valid_person_name
+from utils import _is_valid_person_name, is_fuzzy_match, soundex_kerala
 
 # ---------------------------------------------------------------------------
 # Load local configuration from environment variables
@@ -59,6 +60,27 @@ def load_env(filepath=".env"):
                     os.environ[key] = val
 
 load_env()
+
+
+def _parse_date(value: str):
+    """Parse KPIP date formats into a date object."""
+    if not value:
+        return None
+    text = str(value).strip()
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except Exception:
+            continue
+    return None
+
+
+def _format_date(value):
+    """Normalize a date/date-string to ISO format."""
+    if isinstance(value, date):
+        return value.isoformat()
+    parsed = _parse_date(value)
+    return parsed.isoformat() if parsed else ""
 
 # ---------------------------------------------------------------------------
 # Default Neo4j connection settings
@@ -335,8 +357,16 @@ class GraphDatabase:
     # ------------------------------------------------------------------
     # Relationship creation / update
     # ------------------------------------------------------------------
-    def add_relation(self, u_id: str, v_id: str, rel_type: str, weight: float = 1.0):
-        """Add or update a relationship between two nodes with type constraints."""
+    def add_relation(
+        self,
+        u_id: str,
+        v_id: str,
+        rel_type: str,
+        weight: float = 1.0,
+        report_date: str = "",
+        decay_half_life_days: float = 60.0,
+    ):
+        """Add or update a relationship between two nodes with temporal decay metadata."""
         # First get both node types
         rec = self._run_single(
             """
@@ -373,19 +403,78 @@ class GraphDatabase:
             print(f"[Warning] Rejecting invalid relation: {u_id} ({type_u}) -[{rel_type}]-> {v_id} ({type_v})")
             return
 
-        # MERGE the relationship — Neo4j doesn't support parameterized rel types
-        # so we use APOC-free approach with separate queries per type
+        existing = self._run_single(
+            f"""
+            MATCH (a {{node_id: $uid}}), (b {{node_id: $vid}})
+            OPTIONAL MATCH (a)-[r:{rel_type}]-(b)
+            RETURN properties(r) AS props
+            """,
+            uid=u_id,
+            vid=v_id,
+        )
+        props = (existing or {}).get("props") or {}
+
+        event_date = _parse_date(report_date)
+        stored_last_seen = _parse_date(props.get("last_seen"))
+        lambda_decay = math.log(2.0) / max(float(decay_half_life_days or 60.0), 1.0)
+
+        previous_weight = float(props.get("weight") or 0.0)
+        if props and event_date and stored_last_seen:
+            elapsed_days = max((event_date - stored_last_seen).days, 0)
+            previous_weight *= math.exp(-lambda_decay * elapsed_days)
+
+        new_weight = previous_weight + float(weight)
+        new_base_weight = float(props.get("base_weight") or 0.0) + float(weight)
+        new_occurrence_count = int(props.get("occurrence_count") or 0) + 1
+
+        first_seen_date = _parse_date(props.get("first_seen")) or event_date
+        last_seen_date = stored_last_seen or event_date
+        if event_date and first_seen_date:
+            first_seen_date = min(first_seen_date, event_date)
+        elif event_date:
+            first_seen_date = event_date
+        if event_date and last_seen_date:
+            last_seen_date = max(last_seen_date, event_date)
+        elif event_date:
+            last_seen_date = event_date
+
         query = f"""
             MATCH (a {{node_id: $uid}}), (b {{node_id: $vid}})
             MERGE (a)-[r:{rel_type}]-(b)
-            ON CREATE SET r.weight = $weight, r.type = $rel_type
-            ON MATCH SET r.weight = r.weight + $weight
-            RETURN r.weight AS new_weight
+            SET r.type = $rel_type,
+                r.weight = $new_weight,
+                r.base_weight = $base_weight,
+                r.occurrence_count = $occurrence_count,
+                r.first_seen = CASE WHEN $first_seen <> '' THEN $first_seen ELSE r.first_seen END,
+                r.last_seen = CASE WHEN $last_seen <> '' THEN $last_seen ELSE r.last_seen END,
+                r.decay_half_life_days = $decay_half_life_days,
+                r.last_reported_at = CASE WHEN $last_seen <> '' THEN $last_seen ELSE r.last_reported_at END
+            RETURN properties(r) AS props
         """
-        result = self._run_single(query, uid=u_id, vid=v_id, weight=weight, rel_type=rel_type)
+        result = self._run_single(
+            query,
+            uid=u_id,
+            vid=v_id,
+            rel_type=rel_type,
+            new_weight=new_weight,
+            base_weight=new_base_weight,
+            occurrence_count=new_occurrence_count,
+            first_seen=_format_date(first_seen_date),
+            last_seen=_format_date(last_seen_date),
+            decay_half_life_days=float(decay_half_life_days or 60.0),
+        )
         if result:
-            new_weight = result.get("new_weight", weight)
-            self._log_audit("add_relation", {"u_id": u_id, "v_id": v_id, "rel_type": rel_type, "weight": new_weight})
+            self._log_audit(
+                "add_relation",
+                {
+                    "u_id": u_id,
+                    "v_id": v_id,
+                    "rel_type": rel_type,
+                    "weight": new_weight,
+                    "report_date": report_date,
+                    "occurrence_count": new_occurrence_count,
+                },
+            )
 
     # ------------------------------------------------------------------
     # Query helpers  (replace direct db.G.* access in intel_tool.py)
@@ -483,6 +572,21 @@ class GraphDatabase:
             props["type"] = r.get("rel_type", "unknown")
             result.append((r["uid"], r["vid"], props))
         return result
+
+    def get_relationship_type_counts(self, node_id: str) -> dict:
+        """Return a frequency map of relationship types touching the given node."""
+        records = self._run(
+            """
+            MATCH (n {node_id: $nid})-[r]-()
+            RETURN type(r) AS rel_type, count(r) AS cnt
+            """,
+            nid=node_id,
+        )
+        return {
+            rec["rel_type"]: int(rec.get("cnt") or 0)
+            for rec in records
+            if rec.get("rel_type")
+        }
 
     # ------------------------------------------------------------------
     # Statistics & maintenance
@@ -611,9 +715,38 @@ class GNNModelManager:
         self.idx_to_node_id = {}
         self.feature_dim = 64
         self.embedding_dim = 32
+        self.relation_weight_map = {
+            "ACCUSED_IN": 1.35,
+            "MEMBER_OF": 1.2,
+            "ASSOCIATED_WITH": 1.1,
+            "CO_OCCURRED_WITH": 1.0,
+            "MENTIONED_IN": 0.95,
+            "REPORTED_IN": 0.9,
+        }
+
+    def _build_feature_matrix(self, texts: list, num_nodes: int):
+        """Prefer sentence embeddings, then fall back to TF-IDF."""
+        if HAS_TORCH:
+            try:
+                from app.services.qdrant_service import QdrantService
+
+                qdrant = QdrantService()
+                vectors = [qdrant.embed(text or "") for text in texts]
+                if vectors and any(any(abs(val) > 1e-9 for val in vec) for vec in vectors):
+                    self.feature_dim = len(vectors[0])
+                    return torch.FloatTensor(np.asarray(vectors, dtype=np.float32))
+            except Exception:
+                pass
+
+        vectorizer = TfidfVectorizer(max_features=self.feature_dim, stop_words="english")
+        try:
+            x_sparse = vectorizer.fit_transform(texts)
+            return torch.FloatTensor(x_sparse.toarray())
+        except Exception:
+            return torch.randn(num_nodes, self.feature_dim)
 
     def train(self, epochs: int = 100, lr: float = 0.01) -> bool:
-        """Extract features from Neo4j, build adjacency, and train PyTorch GCN for link prediction."""
+        """Extract features from Neo4j, build relation-aware adjacency, and train the GNN."""
         if not HAS_TORCH:
             print("[Warning] PyTorch is not available. Skipping GNN training.")
             return False
@@ -632,26 +765,22 @@ class GNNModelManager:
         self.node_id_to_idx = {nid: idx for idx, nid in enumerate(node_ids)}
         self.idx_to_node_id = {idx: nid for idx, nid in enumerate(node_ids)}
 
-        # 3) Extract Node Text Features using TF-IDF
+        # 3) Extract node text features using sentence embeddings when available.
         texts = [node_data[nid].get("description", "") for nid in node_ids]
+        X = self._build_feature_matrix(texts, num_nodes)
 
-        vectorizer = TfidfVectorizer(max_features=self.feature_dim, stop_words="english")
-        try:
-            X_sparse = vectorizer.fit_transform(texts)
-            X = torch.FloatTensor(X_sparse.toarray())
-        except Exception:
-            X = torch.randn(num_nodes, self.feature_dim)
-
-        # 4) Build Adjacency Matrix from Neo4j edges
+        # 4) Build adjacency matrix with relation-type and temporal weighting.
         all_edges = self.db.get_all_edges()
         A = np.zeros((num_nodes, num_nodes))
         for u_id, v_id, eprops in all_edges:
             if u_id in self.node_id_to_idx and v_id in self.node_id_to_idx:
                 i = self.node_id_to_idx[u_id]
                 j = self.node_id_to_idx[v_id]
-                w = eprops.get("weight", 1.0)
-                A[i, j] = w
-                A[j, i] = w
+                rel_weight = self.relation_weight_map.get(eprops.get("type", ""), 1.0)
+                temporal_weight = float(eprops.get("weight") or 1.0)
+                w = temporal_weight * rel_weight
+                A[i, j] = max(A[i, j], w)
+                A[j, i] = max(A[j, i], w)
 
         # Self-loops
         A_tilde = A + np.eye(num_nodes)
@@ -750,11 +879,7 @@ class GNNModelManager:
         return min(max(sim, -1.0), 1.0)
 
     def recommend_associates(self, name: str, top_n: int = 3) -> list:
-        """Recommend potential hidden associates for an individual based on
-        GNN embedding similarity.
-
-        Only returns candidates that pass the _is_valid_person_name() check.
-        """
+        """Recommend potential hidden associates for an individual based on GNN similarity."""
         node_id = f"ind_{name.lower().replace(' ', '_')}"
         if not self.db.has_node(node_id):
             return []
@@ -777,14 +902,15 @@ class GNNModelManager:
             # Check direct edge
             edge = self.db.get_edge(node_id, other_id)
             has_direct_edge = bool(edge)
-
-            scores.append((other_name, sim, has_direct_edge))
+            relationship_hint = edge.get("type") if has_direct_edge else ""
+            scores.append((other_name, sim, has_direct_edge, relationship_hint))
 
         scores.sort(key=lambda x: x[1], reverse=True)
         return scores[:top_n]
 
     def disambiguate_profile(self, name: str, candidate_profiles: list, crime_text: str) -> tuple:
-        """Disambiguate an extracted name matching multiple profiles using TF-IDF text similarity.
+        """Disambiguate an extracted name matching multiple profiles using context scoring,
+        LLM coreference checking, and TF-IDF text similarity fallback.
 
         Returns:
             (best_profile, is_ambiguous)
@@ -794,6 +920,114 @@ class GNNModelManager:
         if len(candidate_profiles) == 1:
             return candidate_profiles[0], False
 
+        import re
+        # 1. Context field scoring
+        scored_candidates = []
+        for prof in candidate_profiles:
+            score = 0
+            
+            # Parentage match (e.g. S/o Sivadasan)
+            parent_matches = re.findall(r"[SsDd]/o\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+){0,2})", crime_text)
+            if prof.parentage and parent_matches:
+                for pm in parent_matches:
+                    if is_fuzzy_match(pm, prof.parentage):
+                        score += 15
+                        break
+                        
+            # Police station match
+            if prof.police_station:
+                ps_name = prof.police_station.replace(" PS", "").replace(" ps", "").strip()
+                if ps_name.lower() in crime_text.lower():
+                    score += 10
+                    
+            # Address word match
+            if prof.address:
+                addr_words = [w for w in prof.address.replace(",", " ").split() if len(w) > 3]
+                for w in addr_words:
+                    if w.lower() in crime_text.lower():
+                        score += 5
+                        break
+                        
+            scored_candidates.append((prof, score))
+            
+        scored_candidates.sort(key=lambda x: x[1], reverse=True)
+        
+        # Check if there is a clear winner in context scores (e.g. difference of at least 5)
+        if len(scored_candidates) > 1 and scored_candidates[0][1] >= scored_candidates[1][1] + 5:
+            return scored_candidates[0][0], False
+            
+        # 2. LLM-assisted coreference resolution
+        ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+        ollama_model = os.getenv("OLLAMA_MODEL", "qwen:8b")
+        
+        # Check if Ollama is reachable
+        ollama_available = False
+        try:
+            import requests
+            r = requests.get(f"{ollama_url}/api/tags", timeout=2)
+            if r.status_code == 200:
+                ollama_available = True
+                # Resolve preferred model
+                tags = [t["name"] for t in r.json().get("models", [])]
+                if ollama_model not in tags:
+                    for preferred in ["qwen", "qwen2.5", "gemma2", "llama3"]:
+                        for t in tags:
+                            if t.lower().startswith(preferred):
+                                ollama_model = t
+                                break
+                        if ollama_model in tags:
+                            break
+        except Exception:
+            pass
+            
+        if ollama_available:
+            profiles_context = []
+            for idx, prof in enumerate(candidate_profiles):
+                profiles_context.append(
+                    f"Profile Index: {idx}\n"
+                    f"- Name: {prof.name}\n"
+                    f"- Parentage: {prof.parentage or 'Unknown'}\n"
+                    f"- Residence Address: {prof.address or 'Unknown'}\n"
+                    f"- Police Station Jurisdiction: {prof.police_station or 'Unknown'}\n"
+                    f"- Activity Type: {prof.activity_type or 'Unknown'}\n"
+                )
+            
+            profiles_str = "\n".join(profiles_context)
+            prompt = (
+                "You are an expert intelligence analyst for the Kerala Police.\n"
+                f"A crime report text mentions the suspect name '{name}'. There are multiple matching suspect profile dossiers in our registry.\n"
+                "Review the crime report and the candidate profiles below to determine the most likely suspect matching the report.\n\n"
+                f"Crime Report Text:\n\"\"\"{crime_text}\"\"\"\n\n"
+                "Candidate Suspect Profiles:\n"
+                f"{profiles_str}\n"
+                "CRITICAL RULES:\n"
+                "1. Evaluate matching details (such as parentage/family, police station, town/address, organization/crime details).\n"
+                "2. If one profile is a clear match, return its Profile Index (e.g. 0, 1, 2).\n"
+                "3. If there is not enough context or multiple profiles are equally likely, return 'AMBIGUOUS'.\n"
+                "4. Return ONLY a valid JSON object of the format: {\"best_match_index\": <index_number_or_null>, \"status\": \"resolved\"/\"ambiguous\"}.\n"
+                "No markdown, no explanation, no other text."
+            )
+            
+            try:
+                import requests
+                resp = requests.post(
+                    f"{ollama_url}/api/generate",
+                    json={"model": ollama_model, "prompt": prompt, "stream": False, "format": "json"},
+                    timeout=20
+                )
+                if resp.status_code == 200:
+                    resp_data = json.loads(resp.json().get("response", "").strip())
+                    status = resp_data.get("status")
+                    idx_val = resp_data.get("best_match_index")
+                    if status == "resolved" and idx_val is not None and 0 <= int(idx_val) < len(candidate_profiles):
+                        return candidate_profiles[int(idx_val)], False
+                    elif status == "ambiguous":
+                        # Explicitly declared ambiguous by LLM, route to fallback or return ambiguous
+                        pass
+            except Exception as e:
+                print(f"[Warning] LLM coreference check failed: {e}. Falling back to TF-IDF.")
+
+        # 3. Fallback to TF-IDF similarity calculation
         profile_texts = []
         for prof in candidate_profiles:
             desc = f"Name: {prof.name}. Parentage: {prof.parentage}. Station: {prof.police_station}. Address: {prof.address}."
@@ -806,16 +1040,16 @@ class GNNModelManager:
             cand_vectors = tfidf_matrix[:-1].toarray()
             crime_vector = tfidf_matrix[-1].toarray()[0]
 
-            scores = []
+            tf_idf_scores = []
             for idx, vec in enumerate(cand_vectors):
                 denom = np.linalg.norm(vec) * np.linalg.norm(crime_vector)
                 sim = np.dot(vec, crime_vector) / denom if denom > 0 else 0.0
-                scores.append((candidate_profiles[idx], sim))
+                tf_idf_scores.append((candidate_profiles[idx], sim))
 
-            scores.sort(key=lambda x: x[1], reverse=True)
+            tf_idf_scores.sort(key=lambda x: x[1], reverse=True)
 
-            if len(scores) > 1 and scores[0][1] > scores[1][1] + 0.05:
-                return scores[0][0], False
-            return scores[0][0], True
+            if len(tf_idf_scores) > 1 and tf_idf_scores[0][1] > tf_idf_scores[1][1] + 0.05:
+                return tf_idf_scores[0][0], False
+            return tf_idf_scores[0][0], True
         except Exception:
             return candidate_profiles[0], True
