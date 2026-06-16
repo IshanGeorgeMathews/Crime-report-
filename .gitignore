@@ -1,43 +1,64 @@
-# Data and generated document folders
+# ── Data and generated document folders ─────────────────────────────────────
 BACK FILES/
 DAILY IS REPORT/
 DAILY IS REPORT real/
-PP & Uo Note Dummy-20260427T091522Z-3-001/
-PP & Uo Note Dummy-20260427T091522Z-3-001 real/
+Daily less priority report/
+PP & Uo Note Dummy*/
 
-# Generated graph/local data
+# ── Generated graph/local data ───────────────────────────────────────────────
 graph_db.json
 graph_db.json.bak
 graph_db_audit.json
 review_registry.json
 *.bak
 
-# Generated or private documents
+# ── Generated documents ──────────────────────────────────────────────────────
 *.docx
 *.pdf
 
-# Tests
+# ── Tests ────────────────────────────────────────────────────────────────────
 test_*.py
 *_test.py
 .pytest_cache/
 test*.py
 
-# Python/runtime noise
+# ── Python runtime noise ─────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Virtual environments
+# ── Virtual environments ─────────────────────────────────────────────────────
 .venv/
 venv/
 env/
 
-# Local environment/config
+# ── Sensitive environment files ───────────────────────────────────────────────
+# Never commit actual .env files — use .env.example as templates
 .env
 .env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
 
-# Exclude specific database files and local scripts
+# ── Database files ───────────────────────────────────────────────────────────
+*.db
+*.sqlite
 kpip.db
 backend/kpip.db
-api.py
 
+# ── Uploads ──────────────────────────────────────────────────────────────────
+backend/uploads/
+uploads/
+
+# ── Node.js ──────────────────────────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+api.py
+.dbg/

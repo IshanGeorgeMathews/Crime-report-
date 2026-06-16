@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*$py.class
+.pytest_cache/
+.mypy_cache/
+venv/
+.venv/
+env/
+
+# Node
+node_modules/
+frontend/node_modules/
+
+# Build output
+frontend/dist/
+frontend/.vite/
+
+# Databases and large data files
+*.db
+*.sqlite
+kpip.db
+backend/kpip.db
+graph_db.json
+graph_db.json.bak
+graph_db_audit.json
+review_registry.json
+
+# Sensitive environment files (use .env.example as templates)
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Generated documents and uploads
+uploads/
+BACK FILES/
+DAILY IS REPORT/
+DAILY IS REPORT real/
+Daily less priority report/
+PP & Uo Note Dummy*/
+*.docx
+*.pdf
+
+# Logs and debug
+*.log
+.dbg/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Misc
+*.bak
+implementation_plan.md
+innovations_proposal.md
+debug-neo4j-graph-crash.md

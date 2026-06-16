@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Kerala Police Intelligence Platform"
     API_V1_STR: str = "/api/v1"
     
-    # JWT Auth
+    # JWT Auth — override with a long random string in production!
     SECRET_KEY: str = "secret-key-keep-it-safe-and-change-in-production"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours (single shift)
     
@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     # Defaults to SQLite locally for easy testing without PG setup
     DATABASE_URL: str = "sqlite+aiosqlite:///./kpip.db"
     
-    NEO4J_URI: str = "bolt://localhost:7687"
+    NEO4J_URI: str = "bolt://127.0.0.1:7687"
     NEO4J_USER: str = "neo4j"
     NEO4J_PASSWORD: str = "password"
     NEO4J_DATABASE: str = "prosecutorreport"
@@ -56,14 +56,13 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads"
     )
-    
-    PP_DIR: str = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        "PP & Uo Note Dummy-20260427T091522Z-3-001",
-        "PP & Uo Note Dummy"
-    )
-    
-    PP_TEMPLATE: str = os.path.join(PP_DIR, "PP Form details.docx")
+
+    # PP Form template directory — set PP_DIR env var to point to your local
+    # "PP & Uo Note Dummy" folder. Leave empty to disable PP/UO Note features.
+    PP_DIR: str = ""
+
+    # PP_TEMPLATE is derived from PP_DIR at runtime (see below)
+    PP_TEMPLATE: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -73,5 +72,11 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+# Derive PP_TEMPLATE from PP_DIR if not explicitly set
+if settings.PP_DIR and not settings.PP_TEMPLATE:
+    settings.PP_TEMPLATE = os.path.join(settings.PP_DIR, "PP Form details.docx")
+
 # Ensure directories exist
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+if settings.PP_DIR:
+    os.makedirs(settings.PP_DIR, exist_ok=True)

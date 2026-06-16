@@ -41,7 +41,12 @@ from utils import _is_valid_person_name, is_fuzzy_match, soundex_kerala
 # Load local configuration from environment variables
 # ---------------------------------------------------------------------------
 def load_env(filepath=".env"):
-    """Load variables from .env file into os.environ if it exists."""
+    """Load variables from .env file into os.environ.
+
+    Variables already present in the environment (e.g. set by Docker or the
+    shell) take priority and are NOT overwritten.  This makes the module safe
+    to import inside a Docker container where env vars are injected at runtime.
+    """
     if not os.path.isabs(filepath):
         base_dir = os.path.dirname(os.path.abspath(__file__))
         filepath = os.path.join(base_dir, filepath)
@@ -57,9 +62,11 @@ def load_env(filepath=".env"):
                     val = val.strip()
                     if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
                         val = val[1:-1]
-                    os.environ[key] = val
+                    # Only set if not already defined in the environment
+                    os.environ.setdefault(key, val)
 
 load_env()
+
 
 
 def _parse_date(value: str):

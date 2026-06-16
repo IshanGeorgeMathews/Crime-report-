@@ -297,12 +297,12 @@ export const GraphExplorerPage: React.FC = () => {
           <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 space-y-3">
             <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 pb-2">DB Overview</h3>
             {[
-              { label: 'Total Nodes', val: stats?.total_nodes },
-              { label: 'Edges', val: stats?.total_edges },
-              { label: 'Suspects', val: stats?.individual_nodes },
-              { label: 'Crime Events', val: stats?.crime_nodes },
-              { label: 'Records', val: stats?.record_nodes },
-              { label: 'Cases', val: stats?.case_nodes },
+              { label: 'Total Nodes', val: stats?.totalNodes },
+              { label: 'Edges', val: stats?.totalEdges },
+              { label: 'Suspects', val: stats?.individualNodes },
+              { label: 'Crime Events', val: stats?.crimeNodes },
+              { label: 'Records', val: stats?.recordNodes },
+              { label: 'Cases', val: stats?.caseNodes },
             ].map(row => (
               <div key={row.label} className="flex justify-between items-center text-xs">
                 <span className="text-slate-500 font-medium">{row.label}</span>
