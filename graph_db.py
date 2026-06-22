@@ -207,16 +207,27 @@ class GraphDatabase:
         ps: str = "",
         address: str = "",
         activity_type: str = "",
+        canonical_node_id: str = "",
     ):
         """Add or update an Individual node.
 
         Returns the node_id string on success, or None if *name* fails the
         _is_valid_person_name() validation.
+
+        If *canonical_node_id* is provided (e.g. derived from a PP-ID or the
+        profile's full canonical name), it is used instead of deriving the
+        node-id from *name*.  This prevents duplicate nodes when a report text
+        mentions a short alias (e.g. "Sachin") but the canonical profile name
+        is longer (e.g. "Sachin Divakaran").
+
+        On MATCH the existing ``n.name`` is preserved: the name is only set
+        when the node is first created, so a later mention with a shorter
+        or different name variant does **not** overwrite the original.
         """
         if not _is_valid_person_name(name):
             return None
 
-        node_id = f"ind_{name.lower().replace(' ', '_')}"
+        node_id = canonical_node_id or f"ind_{name.lower().replace(' ', '_')}"
         description = (
             f"Individual name: {name}. PP ID: {pp_id or 'None'}. "
             f"Police Station: {ps or 'None'}. Address: {address or 'None'}. "
@@ -235,11 +246,12 @@ class GraphDatabase:
                 n.activity_type = $activity_type,
                 n.description = $description
             ON MATCH SET
+                n.name        = CASE WHEN n.name IS NULL OR n.name = '' THEN $name ELSE n.name END,
                 n.pp_id       = CASE WHEN $pp_id <> '' THEN $pp_id       ELSE n.pp_id END,
                 n.police_station = CASE WHEN $ps <> '' THEN $ps         ELSE n.police_station END,
                 n.address     = CASE WHEN $address <> '' THEN $address   ELSE n.address END,
                 n.activity_type = CASE WHEN $activity_type <> '' THEN $activity_type ELSE n.activity_type END,
-                n.description = $description
+                n.description = CASE WHEN n.name IS NULL OR n.name = '' THEN $description ELSE n.description END
             """,
             nid=node_id,
             name=name,
@@ -297,6 +309,41 @@ class GraphDatabase:
             description=description,
         )
         self._log_audit("add_crime", {"node_id": node_id, "district": district, "date": date_str})
+        return node_id
+
+    def add_protest(
+        self,
+        protest_id: str,
+        text: str,
+        district: str = "",
+        category: str = "",
+        date_str: str = "",
+        organizer: str = ""
+    ):
+        """Add or update a Protest/Non-Crime node in the Neo4j database."""
+        node_id = f"prt_{protest_id}"
+        description = f"Protest/Event: {text[:100]}... Type: {category or 'Protest'}. Date: {date_str}. Organizer: {organizer or 'None'}."
+        
+        self._run(
+            """
+            MERGE (n:Protest {node_id: $nid})
+            SET n.type        = 'protest',
+                n.text        = $text,
+                n.district    = $district,
+                n.category    = $category,
+                n.date        = $date,
+                n.organizer   = $organizer,
+                n.description = $description
+            """,
+            nid=node_id,
+            text=text,
+            district=district,
+            category=category,
+            date=date_str,
+            organizer=organizer,
+            description=description,
+        )
+        self._log_audit("add_protest", {"node_id": node_id, "district": district, "date": date_str})
         return node_id
 
     def add_organization(self, org_name: str, remarks: str = ""):
@@ -361,6 +408,40 @@ class GraphDatabase:
         self._log_audit("add_case", {"node_id": node_id, "fir_number": fir})
         return node_id
 
+    def merge_individuals(self, keep_id: str, delete_id: str):
+        """Merge two individual nodes, redirecting all relationships of delete_id to keep_id,
+        and then deleting the duplicate delete_id node.
+        """
+        # 1. Redirect all relationships originating from or targeting delete_id to keep_id
+        self._run(
+            """
+            MATCH (d:Individual {node_id: $delete_id})-[r]->(target)
+            MATCH (k:Individual {node_id: $keep_id})
+            MERGE (k)-[new_r:TYPE(r)]->(target)
+            ON CREATE SET new_r = r
+            DELETE r
+            """,
+            keep_id=keep_id,
+            delete_id=delete_id
+        )
+        self._run(
+            """
+            MATCH (source)-[r]->(d:Individual {node_id: $delete_id})
+            MATCH (k:Individual {node_id: $keep_id})
+            MERGE (source)-[new_r:TYPE(r)]->(k)
+            ON CREATE SET new_r = r
+            DELETE r
+            """,
+            keep_id=keep_id,
+            delete_id=delete_id
+        )
+        # 2. Delete the delete_id node
+        self._run(
+            "MATCH (d:Individual {node_id: $delete_id}) DETACH DELETE d",
+            delete_id=delete_id
+        )
+        self._log_audit("merge_individuals", {"keep_id": keep_id, "delete_id": delete_id})
+
     # ------------------------------------------------------------------
     # Relationship creation / update
     # ------------------------------------------------------------------
@@ -394,11 +475,15 @@ class GraphDatabase:
         valid_rels = {
             ("individual", "crime"): {"ASSOCIATED_WITH"},
             ("crime", "individual"): {"ASSOCIATED_WITH"},
+            ("individual", "protest"): {"PARTICIPATED_IN", "ASSOCIATED_WITH"},
+            ("protest", "individual"): {"PARTICIPATED_IN", "ASSOCIATED_WITH"},
             ("individual", "record"): {"MENTIONED_IN"},
             ("record", "individual"): {"MENTIONED_IN"},
             ("individual", "individual"): {"CO_OCCURRED_WITH"},
             ("crime", "record"): {"REPORTED_IN"},
             ("record", "crime"): {"REPORTED_IN"},
+            ("protest", "record"): {"REPORTED_IN"},
+            ("record", "protest"): {"REPORTED_IN"},
             ("individual", "organization"): {"MEMBER_OF"},
             ("organization", "individual"): {"MEMBER_OF"},
             ("individual", "case"): {"ACCUSED_IN"},
@@ -605,6 +690,7 @@ class GraphDatabase:
             "total_edges": 0,
             "individual_nodes": 0,
             "crime_nodes": 0,
+            "protest_nodes": 0,
             "record_nodes": 0,
             "organization_nodes": 0,
             "case_nodes": 0,
@@ -618,6 +704,7 @@ class GraphDatabase:
         for label, key in [
             ("Individual", "individual_nodes"),
             ("Crime", "crime_nodes"),
+            ("Protest", "protest_nodes"),
             ("Record", "record_nodes"),
             ("Organization", "organization_nodes"),
             ("Case", "case_nodes"),
@@ -726,6 +813,7 @@ class GNNModelManager:
             "ACCUSED_IN": 1.35,
             "MEMBER_OF": 1.2,
             "ASSOCIATED_WITH": 1.1,
+            "PARTICIPATED_IN": 1.15,
             "CO_OCCURRED_WITH": 1.0,
             "MENTIONED_IN": 0.95,
             "REPORTED_IN": 0.9,

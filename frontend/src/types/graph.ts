@@ -1,7 +1,7 @@
 export interface GraphNode {
   id: string;
   label: string; // Name, title, or date
-  type: 'individual' | 'crime' | 'record' | 'organization' | 'case';
+  type: 'individual' | 'crime' | 'record' | 'organization' | 'case' | 'protest';
   properties: {
     pp_id?: string;
     police_station?: string;

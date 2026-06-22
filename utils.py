@@ -405,6 +405,27 @@ class PersonProfile:
     def activity_type(self) -> str:
         return self.data.get("Type of Activity", "").strip()
 
+    @property
+    def organization(self) -> str:
+        """Return the organization name from the profile, tolerating various key
+        formats (e.g. '1)  Organization name', '1.\tOrganization name')."""
+        for key, val in self.data.items():
+            if "organization" in key.lower() and "name" in key.lower():
+                if val.strip():
+                    return val.strip()
+        return ""
+
+    @property
+    def org_remarks(self) -> str:
+        """Return organization remarks from the profile, tolerating various key
+        formats (e.g. '2)  Remarks', '2.\tRemarks')."""
+        for key, val in self.data.items():
+            k_lower = key.lower()
+            if "remarks" in k_lower and "organization" not in k_lower and "name" not in k_lower:
+                if val.strip():
+                    return val.strip()
+        return ""
+
 
 def load_profile_database(pp_dir: str) -> list:
     """Load all PP profiles from the PP & Uo Note Dummy directory.
@@ -978,9 +999,15 @@ def update_profile_activity(
         brief_hist = _to_str(structured_data.get("brief_history")).strip()
 
         # Map target fields in the profile paragraphs (safely preserve existing data)
+        # NOTE: "Name of Person" is NEVER overwritten – see guard below.
         for para in doc.paragraphs:
             txt = para.text.strip()
-            
+
+            # Guard: always preserve the existing canonical name
+            if txt.startswith("Name of Person"):
+                # Never overwrite – the first registered name is the canonical one
+                continue
+
             # Check for parentage
             if txt.startswith("Parentage Name"):
                 existing = txt.split("-", 1)[-1].strip()

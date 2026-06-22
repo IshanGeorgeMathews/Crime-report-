@@ -214,6 +214,7 @@ export const GraphExplorerPage: React.FC = () => {
   const NODE_COLORS: Record<string, { fill: string; stroke: string }> = {
     individual:   { fill: '#f43f5e', stroke: '#fb7185' },
     crime:        { fill: '#6366f1', stroke: '#818cf8' },
+    protest:      { fill: '#a855f7', stroke: '#c084fc' },
     record:       { fill: '#f59e0b', stroke: '#fcd34d' },
     case:         { fill: '#0ea5e9', stroke: '#38bdf8' },
     organization: { fill: '#10b981', stroke: '#34d399' },
@@ -450,7 +451,7 @@ export const GraphExplorerPage: React.FC = () => {
                   <div className="w-3 h-3 rounded-full shrink-0" style={{ background: getColor(selectedNode.type).fill }} />
                   <span className="font-bold text-slate-800 truncate">{selectedNode.label || selectedNode.id}</span>
                 </div>
-                <Badge variant={selectedNode.type === 'individual' ? 'red' : selectedNode.type === 'crime' ? 'blue' : 'gray'}>
+                <Badge variant={selectedNode.type === 'individual' ? 'red' : selectedNode.type === 'crime' ? 'blue' : selectedNode.type === 'protest' ? 'purple' : 'gray'}>
                   {selectedNode.type}
                 </Badge>
                 <div className="bg-slate-50 rounded-xl p-2.5 space-y-2 max-h-52 overflow-y-auto">

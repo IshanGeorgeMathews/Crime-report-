@@ -10,6 +10,7 @@ graph_db.json
 graph_db.json.bak
 graph_db_audit.json
 review_registry.json
+non_crime_events.json
 *.bak
 
 # ── Generated documents ──────────────────────────────────────────────────────
@@ -17,15 +18,15 @@ review_registry.json
 *.pdf
 
 # ── Tests ────────────────────────────────────────────────────────────────────
-test_*.py
-*_test.py
 .pytest_cache/
-test*.py
 
 # ── Python runtime noise ─────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
+dist/
+build/
 
 # ── Virtual environments ─────────────────────────────────────────────────────
 .venv/
@@ -58,6 +59,23 @@ uploads/
 node_modules/
 frontend/node_modules/
 frontend/dist/
+
+# ── IDE and editor files ─────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── OS-specific ──────────────────────────────────────────────────────────────
+desktop.ini
+ehthumbs.db
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
 
 # ── Misc ─────────────────────────────────────────────────────────────────────
 api.py

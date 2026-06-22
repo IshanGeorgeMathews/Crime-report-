@@ -100,8 +100,18 @@ class NERService:
                         # (The frontend can view and edit the profile, so the docx itself is updated)
                         prof = PersonProfile(new_path)
                         # Generate a mock PP ID or let supervisor assign one
-                        prof.pp_id = f"{next_num:03d}/{prof.police_station or 'PKD'}"
-                        prof.save()
+                        pp_id_val = f"{next_num:03d}/{prof.police_station or 'PKD'}"
+                        
+                        from docx import Document
+                        doc = Document(new_path)
+                        for para in doc.paragraphs:
+                            txt = para.text.strip()
+                            if "PP ID" in txt:
+                                if "-" in txt:
+                                    parts = txt.split("-", 1)
+                                    para.text = f"{parts[0]}-\t{pp_id_val}"
+                                    break
+                        doc.save(new_path)
                     except Exception as e:
                         print(f"[Error] Failed to rename/update profile file: {e}")
             return True

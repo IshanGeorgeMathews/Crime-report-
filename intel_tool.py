@@ -614,6 +614,11 @@ def cmd_sync_profiles(args):
 
 def _sync_profiles_from_texts(texts: list, report_date: str, use_ollama: bool):
     """Core profile sync logic shared between consolidate and sync-profiles with VEG and ARFR."""
+    from graph_ingestion import GraphIngestionService
+    service = GraphIngestionService(PP_DIR, PP_TEMPLATE)
+    return service.ingest_report_items(texts, report_date, use_ollama)
+
+def _old_sync_profiles_from_texts(texts: list, report_date: str, use_ollama: bool):
     if not os.path.isdir(PP_DIR):
         os.makedirs(PP_DIR, exist_ok=True)
         print(f"  [Info] Created PP directory: {PP_DIR}")
