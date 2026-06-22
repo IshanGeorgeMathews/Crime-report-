@@ -333,11 +333,16 @@ def extract_district_tag(text: str) -> str:
 class PersonProfile:
     """In-memory representation of a PP profile .docx."""
 
-    def __init__(self, filepath: str):
+    def __init__(self, filepath: str, cached_data: dict = None):
         self.filepath = filepath
         self.filename = os.path.basename(filepath)
-        self.data = {}  # key-value pairs extracted from the profile
-        self._parse()
+        if cached_data is not None:
+            self.data = cached_data.get("data", {})
+            self.relations = cached_data.get("relations", [])
+            self.cases = cached_data.get("cases", [])
+        else:
+            self.data = {}  # key-value pairs extracted from the profile
+            self._parse()
 
     def _parse(self):
         doc = Document(self.filepath)
@@ -430,11 +435,30 @@ class PersonProfile:
 def load_profile_database(pp_dir: str) -> list:
     """Load all PP profiles from the PP & Uo Note Dummy directory.
 
-    Returns a list of PersonProfile objects (skipping UO and template files).
+    Uses a JSON index file to avoid parsing unchanged .docx files.
     """
     profiles = []
     if not os.path.isdir(pp_dir):
         return profiles
+
+    index_path = os.path.join(pp_dir, "profile_index.json")
+    index_data = {}
+
+    # Read the index file safely with locking
+    if os.path.exists(index_path):
+        try:
+            from filelock import FileLock
+            lock = FileLock(index_path + ".lock", timeout=5)
+            with lock:
+                with open(index_path, "r", encoding="utf-8") as f:
+                    index_data = json.load(f)
+        except Exception:
+            index_data = {}
+
+    dirty = False
+
+    # Collect valid docx files
+    docx_files = []
     for fname in os.listdir(pp_dir):
         lower = fname.lower()
         if not lower.endswith(".docx"):
@@ -443,11 +467,55 @@ def load_profile_database(pp_dir: str) -> list:
             continue
         if "form details" in lower or "template" in lower:
             continue
+        docx_files.append(fname)
+
+    for fname in docx_files:
         fpath = os.path.join(pp_dir, fname)
         try:
-            profiles.append(PersonProfile(fpath))
+            mtime = os.path.getmtime(fpath)
+        except Exception:
+            continue
+
+        cached = index_data.get(fname)
+        if cached and cached.get("mtime") == mtime:
+            # Use cached data
+            try:
+                prof = PersonProfile(fpath, cached_data=cached)
+                profiles.append(prof)
+            except Exception as e:
+                print(f"  [Warning] Could not load cached profile {fname}: {e}")
+        else:
+            # Parse from scratch
+            try:
+                prof = PersonProfile(fpath)
+                profiles.append(prof)
+                index_data[fname] = {
+                    "mtime": mtime,
+                    "data": prof.data,
+                    "relations": prof.relations,
+                    "cases": prof.cases
+                }
+                dirty = True
+            except Exception as e:
+                print(f"  [Warning] Could not parse profile {fname}: {e}")
+
+    # Remove deleted files from index_data to keep it clean
+    existing_keys = list(index_data.keys())
+    for k in existing_keys:
+        if k not in docx_files:
+            del index_data[k]
+            dirty = True
+
+    if dirty:
+        try:
+            from filelock import FileLock
+            lock = FileLock(index_path + ".lock", timeout=5)
+            with lock:
+                with open(index_path, "w", encoding="utf-8") as f:
+                    json.dump(index_data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"  [Warning] Could not parse profile {fname}: {e}")
+            print(f"  [Warning] Could not write profile index: {e}")
+
     return profiles
 
 
@@ -980,6 +1048,21 @@ def update_profile_activity(
     structured_data: dict = None,
 ):
     """Update the Activities and other structured sections in an existing PP profile .docx."""
+    from filelock import FileLock
+    lock = FileLock(profile_path + ".lock", timeout=5)
+    with lock:
+        _update_profile_activity_locked(
+            profile_path, activity_name, activity_desc, activity_date, persons_involved, structured_data
+        )
+
+def _update_profile_activity_locked(
+    profile_path: str,
+    activity_name: str = "",
+    activity_desc: str = "",
+    activity_date: str = "",
+    persons_involved: str = "",
+    structured_data: dict = None,
+):
     doc = Document(profile_path)
 
     # 1. Update personal details and other text fields if structured_data is provided

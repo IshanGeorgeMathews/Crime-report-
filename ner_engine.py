@@ -352,6 +352,42 @@ class NEREngine:
         # 4. Filter only those verified as PERSON by the model
         return [cand for cand, cls in classifications.items() if cls == "PERSON"]
 
+    def batch_extract_person_names(self, texts: list) -> list:
+        """Extract person names from a list of texts in batch mode for high throughput."""
+        all_candidates = [[] for _ in range(len(texts))]
+        if self.initialize_ner_pipeline():
+            try:
+                # HuggingFace pipeline supports lists of texts natively.
+                results_batch = self.ner_pipeline(texts, batch_size=8)
+                for idx, results in enumerate(results_batch):
+                    for ent in results:
+                        if ent.get("entity_group") == "PER":
+                            name = ent.get("word", "").strip()
+                            name = name.replace(" ##", "").replace("##", "")
+                            if name and len(name) >= 3:
+                                all_candidates[idx].append(name)
+            except Exception as e:
+                print(f"  [Warning] Batch HF NER candidate extraction failed: {e}.")
+        
+        # Fallbacks for empty candidates
+        from utils import extract_candidate_names_from_text
+        for idx in range(len(texts)):
+            if not all_candidates[idx]:
+                all_candidates[idx] = extract_candidate_names_from_text(texts[idx])
+            all_candidates[idx] = list(set(all_candidates[idx]))
+
+        # Classify candidates for each text
+        final_results = []
+        for idx, text in enumerate(texts):
+            cands = all_candidates[idx]
+            if not cands:
+                final_results.append([])
+                continue
+            classifications = self.classify_candidates(text, cands)
+            final_results.append([cand for cand, cls in classifications.items() if cls == "PERSON"])
+            
+        return final_results
+
     def process_candidate(self, name: str, text: str, template_path: str, report_date: str) -> str:
         """Process a candidate that has ALREADY been classified as PERSON by
         classify_candidates().  Simply returns 'approved' so the caller

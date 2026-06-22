@@ -33,7 +33,6 @@ class GraphIngestionService:
         1. Classifies and routes non-crime events (like protests) vs crime events.
         2. Resolves identities of extracted names using rule-based scoring (or flags for review).
         3. Persists profiles, UO notes, and Neo4j nodes/edges without duplicate repetition.
-        4. Triggers GNN model training on the updated graph.
         """
         if not os.path.isdir(self.pp_dir):
             os.makedirs(self.pp_dir, exist_ok=True)
@@ -44,7 +43,17 @@ class GraphIngestionService:
 
         # Connect to Neo4j
         db = GraphDatabase()
+        ner_eng = NEREngine(self.pp_dir)
+        new_names_in_run = set()
 
+        with db.transaction():
+            self._ingest_report_items_transactional(
+                db, texts, report_date, use_ollama, profiles, ner_eng, new_names_in_run
+            )
+
+    def _ingest_report_items_transactional(
+        self, db, texts, report_date, use_ollama, profiles, ner_eng, new_names_in_run
+    ):
         # Pre-clean junk nodes
         removed = db.clean_junk_nodes()
         if removed:
@@ -52,14 +61,6 @@ class GraphIngestionService:
 
         # Add Record node
         rec_id = db.add_record(report_date)
-
-        # Initialize NER and GNN
-        ner_eng = NEREngine(self.pp_dir)
-        gnn = GNNModelManager(db)
-        if db.node_count() > 3:
-            gnn.train(epochs=50)
-
-        new_names_in_run = set()
 
         for idx, text in enumerate(texts):
             # Extract structured data using Ollama if enabled

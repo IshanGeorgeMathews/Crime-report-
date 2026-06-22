@@ -16,7 +16,7 @@ NON_CRIME_KEYWORDS = [
 class NonCrimeHandler:
     def __init__(self, pp_dir: str):
         self.pp_dir = pp_dir
-        self.json_path = os.path.join(pp_dir, "non_crime_events.json")
+        self.json_path = os.path.join(pp_dir, "non_crime_events.jsonl")
 
     def identify_non_crime_event(self, text: str) -> bool:
         """Check if the text represents a non-crime event like a protest, festival, etc.
@@ -99,29 +99,36 @@ class NonCrimeHandler:
         }
 
     def store_non_crime_event(self, event_data: dict):
-        """Save the extracted event to the local non_crime_events.json file."""
-        events = []
-        if os.path.exists(self.json_path):
-            try:
-                with open(self.json_path, "r", encoding="utf-8") as f:
-                    events = json.load(f)
-                    if not isinstance(events, list):
-                        events = []
-            except Exception:
-                events = []
-                
-        # De-duplicate by checking if exact text already exists
-        for existing in events:
-            if existing.get("text") == event_data.get("text"):
+        """Save the extracted event to the local non_crime_events.jsonl file."""
+        from filelock import FileLock
+        lock = FileLock(self.json_path + ".lock", timeout=5)
+        with lock:
+            exists = False
+            if os.path.exists(self.json_path):
+                try:
+                    with open(self.json_path, "r", encoding="utf-8") as f:
+                        for line in f:
+                            if not line.strip():
+                                continue
+                            try:
+                                obj = json.loads(line)
+                                if obj.get("text") == event_data.get("text"):
+                                    exists = True
+                                    break
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+            if exists:
                 return
-                
-        events.append(event_data)
-        try:
-            with open(self.json_path, "w", encoding="utf-8") as f:
-                json.dump(events, f, indent=2, ensure_ascii=False)
-            print(f"  [Non-Crime Handler] Stored event of type '{event_data['event_type']}' locally.")
-        except Exception as e:
-            print(f"[Error] Failed to store non-crime event locally: {e}")
+
+            try:
+                with open(self.json_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(event_data, ensure_ascii=False) + "\n")
+                print(f"  [Non-Crime Handler] Stored event of type '{event_data['event_type']}' locally (JSONL).")
+            except Exception as e:
+                print(f"[Error] Failed to store non-crime event locally: {e}")
 
     def save_to_graph(self, db, event_data: dict, rec_id: str, report_date: str) -> str:
         """Create a Protest node in the Neo4j graph and link it to the Record and individuals."""

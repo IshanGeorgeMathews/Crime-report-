@@ -13,6 +13,43 @@ class GraphService:
             auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
             database=settings.NEO4J_DATABASE
         )
+        # Cached GNN model — reused across requests, retrained only on topology change
+        self._gnn: Optional[GNNModelManager] = None
+        self._gnn_node_count: int = -1  # node count at last training run
+        # Pre-warm the sentence-embedding model at service startup so the first
+        # real call is instant (QdrantService is already a singleton).
+        self._prewarm_qdrant()
+
+    def _prewarm_qdrant(self):
+        """Eagerly initialise the QdrantService/SentenceTransformer so the heavy
+        model load happens once at startup, not on the first user request."""
+        try:
+            from app.services.qdrant_service import get_qdrant_service
+            get_qdrant_service()._init_qdrant()  # no-op if already done
+        except Exception as exc:
+            print(f"[GraphService] Qdrant pre-warm skipped: {exc}")
+
+    def _get_gnn(self) -> GNNModelManager:
+        """Return the cached GNNModelManager, training/retraining only when the
+        graph topology has changed (i.e. the total node count differs from the
+        count at the last training run)."""
+        current_node_count = 0
+        try:
+            stats = self.db.get_stats()
+            current_node_count = stats.get("total_nodes", 0)
+        except Exception:
+            pass
+
+        if self._gnn is None or current_node_count != self._gnn_node_count:
+            print(f"[GraphService] GNN cache miss (nodes: {self._gnn_node_count} → {current_node_count}). Training…")
+            gnn = GNNModelManager(self.db)
+            gnn.train(epochs=50)
+            self._gnn = gnn
+            self._gnn_node_count = current_node_count
+        else:
+            print("[GraphService] GNN cache hit — skipping training.")
+
+        return self._gnn
 
     def get_stats(self) -> Dict[str, Any]:
         """Fetch general graph database statistics (returns camelCase keys for frontend)."""
@@ -47,17 +84,15 @@ class GraphService:
         return self.db.clean_junk_nodes()
 
     def get_associates(self, person_name: str, top_n: int = 5) -> List[Dict[str, Any]]:
-        """Run GNN training and get recommended associates for a name."""
+        """Get recommended associates for a name using the cached GNN model.
+        The model is only (re)trained when the graph topology has changed.
+        """
         if not self.db.is_connected():
             return []
-        
-        # Instantiate and train GNN manager
-        gnn = GNNModelManager(self.db)
-        # Train on the current graph data
-        gnn.train(epochs=50)
-        
+
+        gnn = self._get_gnn()
         raw_recs = gnn.recommend_associates(person_name, top_n=top_n)
-        
+
         # Map output to frontend GnnRecommendation schema
         recommendations = []
         for recommendation in raw_recs:

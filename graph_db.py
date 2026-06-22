@@ -99,9 +99,35 @@ NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "prosecutorreport")
 NEO4J_AUTH = (NEO4J_USER, NEO4J_PASSWORD)
 
 
-# ---------------------------------------------------------------------------
-# Graph Database Manager  (Neo4j backend)
-# ---------------------------------------------------------------------------
+class Neo4jTransactionContext:
+    def __init__(self, db):
+        self.db = db
+        self.session = None
+        self.tx = None
+
+    def __enter__(self):
+        self.session = self.db._driver.session(database=self.db.database)
+        self.tx = self.session.begin_transaction()
+        self.db._current_tx = self.tx
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if exc_type is not None:
+                self.tx.rollback()
+            else:
+                self.tx.commit()
+        except Exception as e:
+            print(f"[Warning] Failed to commit transaction: {e}")
+            try:
+                self.tx.rollback()
+            except Exception:
+                pass
+        finally:
+            self.tx.close()
+            self.session.close()
+            self.db._current_tx = None
+
 
 class GraphDatabase:
 
@@ -115,13 +141,19 @@ class GraphDatabase:
         self.auth = auth
         self.database = database
         self._driver = Neo4jDriver.driver(uri, auth=auth)
+        self._current_tx = None
         # Audit log location — kept in the project Code directory
         self._audit_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "graph_db_audit.json"
+            os.path.dirname(os.path.abspath(__file__)), "graph_db_audit.jsonl"
         )
         try:
             self._driver.verify_connectivity()
             print(f"[Info] Connected to Neo4j at {uri}, database='{database}'.")
+            try:
+                import db_migrations
+                db_migrations.ensure_indexes()
+            except Exception as migration_error:
+                print(f"[Warning] Index migrations failed: {migration_error}")
         except Exception as e:
             print(f"[Error] Failed to connect to Neo4j at {uri}: {e}")
 
@@ -151,11 +183,21 @@ class GraphDatabase:
         pass
 
     # ------------------------------------------------------------------
+    # Transaction Batching Context Manager
+    # ------------------------------------------------------------------
+    def transaction(self):
+        """Return a context manager to run multiple queries in a single transaction."""
+        return Neo4jTransactionContext(self)
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
     def _run(self, query: str, **params):
         """Execute a Cypher query and return a list of record dicts."""
         try:
+            if self._current_tx is not None:
+                result = self._current_tx.run(query, **params)
+                return [record.data() for record in result]
             with self._driver.session(database=self.database) as session:
                 result = session.run(query, **params)
                 return [record.data() for record in result]
@@ -166,6 +208,10 @@ class GraphDatabase:
     def _run_single(self, query: str, **params):
         """Execute a Cypher query and return a single record dict or None."""
         try:
+            if self._current_tx is not None:
+                result = self._current_tx.run(query, **params)
+                record = result.single()
+                return record.data() if record else None
             with self._driver.session(database=self.database) as session:
                 result = session.run(query, **params)
                 record = result.single()
@@ -175,25 +221,29 @@ class GraphDatabase:
             return None
 
     def _log_audit(self, action: str, details: dict):
-        """Write a log entry to graph_db_audit.json."""
+        """Append a single-line JSON entry to the audit log (JSONL format).
+
+        This is O(1) per call — no file parsing, no array management.
+        Safe for concurrent writes via filelock.
+        """
         log_entry = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "action": action,
             "details": details,
         }
-        logs = []
-        if os.path.exists(self._audit_path):
-            try:
-                with open(self._audit_path, "r", encoding="utf-8") as f:
-                    logs = json.load(f)
-                    if not isinstance(logs, list):
-                        logs = []
-            except Exception:
-                logs = []
-        logs.append(log_entry)
         try:
-            with open(self._audit_path, "w", encoding="utf-8") as f:
-                json.dump(logs, f, indent=2, ensure_ascii=False)
+            from filelock import FileLock
+            lock = FileLock(self._audit_path + ".lock", timeout=5)
+            with lock:
+                with open(self._audit_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+        except ImportError:
+            # Fallback without locking if filelock not installed
+            try:
+                with open(self._audit_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+            except Exception as e:
+                print(f"[Warning] Failed to write to audit log: {e}")
         except Exception as e:
             print(f"[Warning] Failed to write to audit log: {e}")
 
@@ -780,7 +830,10 @@ if HAS_TORCH:
 
         def forward(self, x: torch.Tensor, adj_norm: torch.Tensor) -> torch.Tensor:
             support = torch.matmul(x, self.weight)
-            output = torch.matmul(adj_norm, support)
+            if adj_norm.is_sparse:
+                output = torch.sparse.mm(adj_norm, support)
+            else:
+                output = torch.matmul(adj_norm, support)
             return output + self.bias
 
     class GCN(nn.Module):
@@ -823,9 +876,9 @@ class GNNModelManager:
         """Prefer sentence embeddings, then fall back to TF-IDF."""
         if HAS_TORCH:
             try:
-                from app.services.qdrant_service import QdrantService
+                from app.services.qdrant_service import get_qdrant_service
 
-                qdrant = QdrantService()
+                qdrant = get_qdrant_service()
                 vectors = [qdrant.embed(text or "") for text in texts]
                 if vectors and any(any(abs(val) > 1e-9 for val in vec) for vec in vectors):
                     self.feature_dim = len(vectors[0])
@@ -866,27 +919,55 @@ class GNNModelManager:
 
         # 4) Build adjacency matrix with relation-type and temporal weighting.
         all_edges = self.db.get_all_edges()
-        A = np.zeros((num_nodes, num_nodes))
+        import scipy.sparse as sp
+        
+        # Build sparse matrix A
+        row_indices = []
+        col_indices = []
+        data = []
+        
+        # Keep track of max weights for (i, j) pairs
+        edge_weights = {}
         for u_id, v_id, eprops in all_edges:
             if u_id in self.node_id_to_idx and v_id in self.node_id_to_idx:
                 i = self.node_id_to_idx[u_id]
                 j = self.node_id_to_idx[v_id]
+                if i == j:
+                    continue
                 rel_weight = self.relation_weight_map.get(eprops.get("type", ""), 1.0)
                 temporal_weight = float(eprops.get("weight") or 1.0)
                 w = temporal_weight * rel_weight
-                A[i, j] = max(A[i, j], w)
-                A[j, i] = max(A[j, i], w)
+                pair = (min(i, j), max(i, j))
+                edge_weights[pair] = max(edge_weights.get(pair, 0.0), w)
+
+        for (i, j), w in edge_weights.items():
+            row_indices.extend([i, j])
+            col_indices.extend([j, i])
+            data.extend([w, w])
 
         # Self-loops
-        A_tilde = A + np.eye(num_nodes)
-        # Degree normalization
-        degrees = np.sum(A_tilde, axis=1)
+        row_indices.extend(range(num_nodes))
+        col_indices.extend(range(num_nodes))
+        data.extend([1.0] * num_nodes)
+
+        # Create sparse COO matrix
+        A_tilde = sp.coo_matrix((data, (row_indices, col_indices)), shape=(num_nodes, num_nodes))
+        
+        # Degree normalization: D^-1/2 * A_tilde * D^-1/2
+        degrees = np.array(A_tilde.sum(axis=1)).flatten()
         deg_inv_sqrt = np.power(degrees, -0.5, where=degrees > 0)
         deg_inv_sqrt[degrees == 0] = 0
-        D_inv_sqrt = np.diag(deg_inv_sqrt)
-        adj_norm_np = D_inv_sqrt @ A_tilde @ D_inv_sqrt
+        D_inv_sqrt = sp.diags(deg_inv_sqrt)
+        
+        adj_norm_sparse = D_inv_sqrt.dot(A_tilde).dot(D_inv_sqrt).tocoo()
 
-        adj_norm = torch.FloatTensor(adj_norm_np)
+        # Decide whether to use sparse or dense tensor
+        if num_nodes > 1000:
+            indices = torch.LongTensor(np.vstack((adj_norm_sparse.row, adj_norm_sparse.col)))
+            values = torch.FloatTensor(adj_norm_sparse.data)
+            adj_norm = torch.sparse_coo_tensor(indices, values, torch.Size(adj_norm_sparse.shape))
+        else:
+            adj_norm = torch.FloatTensor(adj_norm_sparse.toarray())
 
         # 5) Prepare Link Prediction Datasets
         pos_edges = []
@@ -903,7 +984,8 @@ class GNNModelManager:
             v_idx = np.random.randint(0, num_nodes)
             if u_idx == v_idx:
                 continue
-            if A[u_idx, v_idx] == 0 and (u_idx, v_idx) not in neg_set and (v_idx, u_idx) not in neg_set:
+            pair = (min(u_idx, v_idx), max(u_idx, v_idx))
+            if pair not in edge_weights and (u_idx, v_idx) not in neg_set and (v_idx, u_idx) not in neg_set:
                 neg_edges.append((u_idx, v_idx))
                 neg_set.add((u_idx, v_idx))
 

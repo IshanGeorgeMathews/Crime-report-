@@ -3,6 +3,20 @@ import os
 from typing import List, Dict, Any, Optional
 from app.config import settings
 
+# ---------------------------------------------------------------------------
+# Module-level singleton so the SentenceTransformer model is loaded at most
+# once per process. Use get_qdrant_service() instead of QdrantService() directly.
+# ---------------------------------------------------------------------------
+_INSTANCE: "Optional[QdrantService]" = None
+
+
+def get_qdrant_service() -> "QdrantService":
+    """Return the process-wide QdrantService singleton, creating it on first call."""
+    global _INSTANCE
+    if _INSTANCE is None:
+        _INSTANCE = QdrantService()
+    return _INSTANCE
+
 # Qdrant client might not connect if server is down, so we handle it gracefully
 class QdrantService:
     def __init__(self):
