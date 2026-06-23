@@ -1,0 +1,35 @@
+# =============================================================================
+# Root requirements — CLI tools, NER, graph, translation, and ingestion engine
+# =============================================================================
+
+# Core document handling
+python-docx>=0.8.11
+
+# Translation
+deep-translator>=1.11.4
+transformers>=4.40.0
+sentencepiece>=0.2.0
+accelerate>=0.30.0
+sacremoses>=0.1.1
+indic-nlp-library>=0.92
+protobuf>=4.25.0
+
+# HTTP (Ollama integration)
+requests>=2.31.0
+
+# Neo4j graph database driver
+neo4j>=5.14.0
+
+# Machine learning / GNN
+numpy>=1.24.0
+scikit-learn>=1.3.0
+torch>=2.0.0
+
+# Fuzzy string matching (for identity resolution)
+rapidfuzz>=3.6.0
+
+# Concurrency and batching
+filelock>=3.13.0
+
+# Testing
+pytest>=7.0.0

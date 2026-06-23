@@ -1,0 +1,82 @@
+# ── Data and generated document folders ─────────────────────────────────────
+BACK FILES/
+DAILY IS REPORT/
+DAILY IS REPORT real/
+Daily less priority report/
+PP & Uo Note Dummy*/
+
+# ── Generated graph/local data ───────────────────────────────────────────────
+graph_db.json
+graph_db.json.bak
+graph_db_audit.json
+review_registry.json
+non_crime_events.json
+*.bak
+
+# ── Generated documents ──────────────────────────────────────────────────────
+*.docx
+*.pdf
+
+# ── Tests ────────────────────────────────────────────────────────────────────
+.pytest_cache/
+
+# ── Python runtime noise ─────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# ── Virtual environments ─────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── Sensitive environment files ───────────────────────────────────────────────
+# Never commit actual .env files — use .env.example as templates
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# ── Database files ───────────────────────────────────────────────────────────
+*.db
+*.sqlite
+kpip.db
+backend/kpip.db
+
+# ── Uploads ──────────────────────────────────────────────────────────────────
+backend/uploads/
+uploads/
+
+# ── Node.js ──────────────────────────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# ── IDE and editor files ─────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── OS-specific ──────────────────────────────────────────────────────────────
+desktop.ini
+ehthumbs.db
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+api.py
+.dbg/
