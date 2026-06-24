@@ -756,7 +756,7 @@ async def query_subgraph(
 @router.get("/graph/associates/{person_name}")
 async def get_predicted_associates(person_name: str, current_user: User = Depends(require_viewer)):
     """Discover hidden associates predicted via GNN Link Prediction GCN model embeddings."""
-    res = graph_service.get_associates(person_name, top_n=5)
+    res = await graph_service.get_associates(person_name, top_n=5)
     return {"success": True, "data": res}
 
 @router.post("/graph/clean")

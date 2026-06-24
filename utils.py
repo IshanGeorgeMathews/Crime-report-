@@ -1243,7 +1243,7 @@ def generate_uo_note_text(profile: PersonProfile, use_ollama: bool = False, olla
             resp = requests.post(
                 f"{ollama_url}/api/generate",
                 json={"model": "llama3", "prompt": prompt, "stream": False},
-                timeout=90,
+                timeout=120,
             )
             if resp.status_code == 200:
                 return resp.json().get("response", "").strip()
