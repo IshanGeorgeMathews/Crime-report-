@@ -2,20 +2,24 @@ import app.core.paths  # Configures Python path for importing existing modules
 from typing import Dict, List, Any, Optional
 from datetime import datetime, date
 import math
+import asyncio
 from graph_db import GraphDatabase, GNNModelManager
 from app.config import settings
 
 class GraphService:
     def __init__(self):
-        # Instantiate the existing GraphDatabase wrapper with config settings
+        # Instantiate the existing GraphDatabase wrapper with config settings.
+        # auto_connect=False to avoid blocking import or crashing at startup.
         self.db = GraphDatabase(
             uri=settings.NEO4J_URI,
             auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
-            database=settings.NEO4J_DATABASE
+            database=settings.NEO4J_DATABASE,
+            auto_connect=False
         )
         # Cached GNN model — reused across requests, retrained only on topology change
         self._gnn: Optional[GNNModelManager] = None
         self._gnn_node_count: int = -1  # node count at last training run
+        self._gnn_lock = asyncio.Lock()
         # Pre-warm the sentence-embedding model at service startup so the first
         # real call is instant (QdrantService is already a singleton).
         self._prewarm_qdrant()
@@ -29,7 +33,7 @@ class GraphService:
         except Exception as exc:
             print(f"[GraphService] Qdrant pre-warm skipped: {exc}")
 
-    def _get_gnn(self) -> GNNModelManager:
+    async def _get_gnn(self) -> GNNModelManager:
         """Return the cached GNNModelManager, training/retraining only when the
         graph topology has changed (i.e. the total node count differs from the
         count at the last training run)."""
@@ -40,14 +44,16 @@ class GraphService:
         except Exception:
             pass
 
-        if self._gnn is None or current_node_count != self._gnn_node_count:
-            print(f"[GraphService] GNN cache miss (nodes: {self._gnn_node_count} → {current_node_count}). Training…")
-            gnn = GNNModelManager(self.db)
-            gnn.train(epochs=50)
-            self._gnn = gnn
-            self._gnn_node_count = current_node_count
-        else:
-            print("[GraphService] GNN cache hit — skipping training.")
+        async with self._gnn_lock:
+            if self._gnn is None or current_node_count != self._gnn_node_count:
+                print(f"[GraphService] GNN cache miss (nodes: {self._gnn_node_count} → {current_node_count}). Training…")
+                gnn = GNNModelManager(self.db)
+                # Offload blocking training to a thread executor to avoid stalling the event loop
+                await asyncio.to_thread(gnn.train, epochs=50)
+                self._gnn = gnn
+                self._gnn_node_count = current_node_count
+            else:
+                print("[GraphService] GNN cache hit — skipping training.")
 
         return self._gnn
 
@@ -83,15 +89,16 @@ class GraphService:
             return 0
         return self.db.clean_junk_nodes()
 
-    def get_associates(self, person_name: str, top_n: int = 5) -> List[Dict[str, Any]]:
+    async def get_associates(self, person_name: str, top_n: int = 5) -> List[Dict[str, Any]]:
         """Get recommended associates for a name using the cached GNN model.
         The model is only (re)trained when the graph topology has changed.
         """
         if not self.db.is_connected():
             return []
 
-        gnn = self._get_gnn()
-        raw_recs = gnn.recommend_associates(person_name, top_n=top_n)
+        gnn = await self._get_gnn()
+        # recommend_associates also does some numpy work, maybe also to_thread if slow
+        raw_recs = await asyncio.to_thread(gnn.recommend_associates, person_name, top_n=top_n)
 
         # Map output to frontend GnnRecommendation schema
         recommendations = []

@@ -136,26 +136,35 @@ class GraphDatabase:
         uri: str = NEO4J_URI,
         auth: tuple = NEO4J_AUTH,
         database: str = NEO4J_DATABASE,
+        auto_connect: bool = True,
     ):
         self.uri = uri
         self.auth = auth
         self.database = database
-        self._driver = Neo4jDriver.driver(uri, auth=auth)
+        self._driver = None
         self._current_tx = None
         # Audit log location — kept in the project Code directory
         self._audit_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "graph_db_audit.jsonl"
         )
+        if auto_connect:
+            self.connect()
+
+    def connect(self):
+        """Establish connection to Neo4j."""
+        if self._driver:
+            return
         try:
+            self._driver = Neo4jDriver.driver(self.uri, auth=self.auth)
             self._driver.verify_connectivity()
-            print(f"[Info] Connected to Neo4j at {uri}, database='{database}'.")
+            print(f"[Info] Connected to Neo4j at {self.uri}, database='{self.database}'.")
             try:
                 import db_migrations
                 db_migrations.ensure_indexes()
             except Exception as migration_error:
                 print(f"[Warning] Index migrations failed: {migration_error}")
         except Exception as e:
-            print(f"[Error] Failed to connect to Neo4j at {uri}: {e}")
+            print(f"[Error] Failed to connect to Neo4j at {self.uri}: {e}")
 
     # ------------------------------------------------------------------
     # Context manager support
@@ -194,6 +203,10 @@ class GraphDatabase:
     # ------------------------------------------------------------------
     def _run(self, query: str, **params):
         """Execute a Cypher query and return a list of record dicts."""
+        if not self._driver:
+            self.connect()
+        if not self._driver:
+            return []
         try:
             if self._current_tx is not None:
                 result = self._current_tx.run(query, **params)
@@ -207,6 +220,10 @@ class GraphDatabase:
 
     def _run_single(self, query: str, **params):
         """Execute a Cypher query and return a single record dict or None."""
+        if not self._driver:
+            self.connect()
+        if not self._driver:
+            return None
         try:
             if self._current_tx is not None:
                 result = self._current_tx.run(query, **params)
@@ -684,6 +701,10 @@ class GraphDatabase:
 
     def is_connected(self) -> bool:
         """Check if Neo4j is reachable and the database exists."""
+        if not self._driver:
+            self.connect()
+        if not self._driver:
+            return False
         try:
             self._driver.verify_connectivity()
             return True
@@ -1190,7 +1211,7 @@ class GNNModelManager:
                 resp = requests.post(
                     f"{ollama_url}/api/generate",
                     json={"model": ollama_model, "prompt": prompt, "stream": False, "format": "json"},
-                    timeout=20
+                    timeout=25
                 )
                 if resp.status_code == 200:
                     resp_data = json.loads(resp.json().get("response", "").strip())

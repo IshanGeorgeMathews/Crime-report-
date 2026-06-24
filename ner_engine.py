@@ -215,7 +215,7 @@ class NEREngine:
                 resp = requests.post(
                     f"{self.ollama_url}/api/generate",
                     json={"model": model_to_use, "prompt": prompt, "stream": False, "format": "json"},
-                    timeout=45
+                    timeout=60
                 )
                 if resp.status_code == 200:
                     response_text = resp.json().get("response", "").strip()
@@ -289,7 +289,7 @@ class NEREngine:
             resp = requests.post(
                 f"{self.ollama_url}/api/generate",
                 json={"model": model_to_use, "prompt": prompt, "stream": False, "format": "json"},
-                timeout=30
+                timeout=45
             )
             if resp.status_code == 200:
                 response_text = resp.json().get("response", "").strip()
